@@ -1,0 +1,8 @@
+let SafeEnd = iff(WindowValid, End - 1m, Start - 1m);
+range Minute from Start to SafeEnd step 1m
+| where DataValid and toscalar(Usage | count) > 0
+| join kind=leftouter (
+    Usage | summarize ObservedTPM = sum(Tokens) by Minute
+) on Minute
+| project Minute, ObservedTPM = coalesce(ObservedTPM, 0)
+| order by Minute asc

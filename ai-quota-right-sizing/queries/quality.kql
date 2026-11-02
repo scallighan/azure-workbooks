@@ -1,0 +1,30 @@
+let SeenAccounts = toscalar(Deduplicated | where ValidTokens | summarize dcount(AccountId));
+let UsableRows = toscalar(Deduplicated | summarize countif(ValidTokens));
+let UnattributedRows = toscalar(Deduplicated | summarize countif(ValidTokens and isempty(Deployment)));
+let UnattributedTokens = toscalar(Deduplicated | summarize sumif(Tokens, ValidTokens and isempty(Deployment)));
+print Status = case(
+    not(WindowValid), "BLOCKED: select between 1 minute and 31 days of complete minutes.",
+    AmbiguousRows > 0, "BLOCKED: usage without a request or correlation ID belongs to an account with logs in multiple workspaces.",
+    ReusedIdsInWorkspace > 0, "BLOCKED: an identifier has multiple timestamps in the same workspace. Inspect potential identifier reuse.",
+    DeploymentConflicts > 0, "BLOCKED: an identifier appears both with and without a deployment name. Inspect diagnostic data.",
+    ConflictingRequests > 0, "BLOCKED: copies disagree on operation, model, version or tokens, or have timestamps at least one minute apart.",
+    InvalidRows > 0, "BLOCKED: malformed tokens. Inspect diagnostic data before sizing.",
+    UsableRows == 0, "NO USAGE DATA: check workspace discovery/access, category, filters, and Diagnostic Settings. This does not mean zero demand.",
+    UnattributedRows > 0, "PARTIAL DEPLOYMENTS: usage without a deployment is included in fleet/model totals but excluded from deployment sizing. Confirm logging coverage and compare native metrics.",
+    "CONDITIONAL: unobserved minutes count as zero. Confirm diagnostics were enabled for the entire window; compare with native metrics."),
+    StartUTC = Start, EndUTCExclusive = End, CalendarMinutes = CalendarMinutes,
+    SelectedWorkspaces = array_length(dynamic([{Workspaces}])),
+    AccountsWithLogs = SeenAccounts,
+    SelectedAccounts = array_length(dynamic([{Accounts}])),
+    AccountsWithoutLogs = array_length(dynamic([{Accounts}])) - SeenAccounts,
+    UsableRows = UsableRows,
+    RowsWithoutTokens = toscalar(Raw | summarize countif(not(HasTokens))),
+    InvalidRows = InvalidRows,
+    WorkspacesWithLogs = toscalar(Raw | summarize by WorkspaceId | count),
+    AccountsInMultipleWorkspaces = toscalar(MultiWorkspaceAccounts | count),
+    DuplicateRowsRemoved = DuplicateRows, AmbiguousRowsWithoutId = AmbiguousRows,
+    ConflictingRequests = ConflictingRequests, DeploymentConflicts = DeploymentConflicts,
+    ReusedIdsInWorkspace = ReusedIdsInWorkspace,
+    TimestampShiftedRequests = toscalar(Identified | summarize countif(Copies > 1 and FirstTime != LastTime)),
+    CrossMinuteRequests = toscalar(Identified | summarize countif(bin(FirstTime, 1m) != bin(LastTime, 1m))),
+    UnattributedRows = UnattributedRows, UnattributedTokens = UnattributedTokens

@@ -1,0 +1,91 @@
+let RequestedStart = datetime({TimeRange:startISO});
+let RequestedEnd = datetime({TimeRange:endISO});
+let Start = bin(RequestedStart, 1m) + iff(RequestedStart == bin(RequestedStart, 1m), 0m, 1m);
+let End = bin(min_of(RequestedEnd, now() - 5m), 1m);
+let CalendarMinutes = datetime_diff('minute', End, Start);
+let WindowValid = CalendarMinutes between (1 .. 44640);
+let TokenCount = (v:dynamic) {
+    iff(gettype(v) == "array", tolong(array_sum(v)), tolong(v))
+};
+let Raw = materialize(
+    AzureDiagnostics
+    | where TimeGenerated >= Start and TimeGenerated < End
+    | where ResourceProvider =~ "MICROSOFT.COGNITIVESERVICES"
+    | where Category == '{LogCategory}'
+    | extend AccountId = tolower(coalesce(_ResourceId, ResourceId)),
+             p = parse_json(tostring(column_ifexists("properties_s", "")))
+    | extend SubscriptionId = tostring(split(AccountId, "/")[2]),
+             Account = tostring(split(AccountId, "/")[8]),
+             Deployment = tostring(p.modelDeploymentName),
+             Model = iff(isempty(tostring(p.modelName)), "(unknown model)", tostring(p.modelName)),
+             Version = tostring(p.modelVersion),
+             ExplicitRequestId = coalesce(tostring(p.requestId), tostring(column_ifexists("requestId_s", ""))),
+             CorrelationId = tolower(tostring(column_ifexists("CorrelationId", ""))),
+             Operation = tostring(column_ifexists("OperationName", "")),
+             Prompt = TokenCount(p.promptTokens),
+             OutputValue = iff(Category == "AzureOpenAIRequestUsage", p.generatedTokens, p.completionTokens)
+    | extend Output = TokenCount(OutputValue),
+             CorrelationId = iff(CorrelationId == "00000000-0000-0000-0000-000000000000", "", CorrelationId)
+    | extend RequestId = coalesce(ExplicitRequestId, CorrelationId)
+    | where AccountId in~ ({Accounts})
+    | where "*" in ({Models}) or Model in ({Models})
+    | extend HasTokens = isnotnull(p.promptTokens) or isnotnull(OutputValue)
+    | extend ValidTokens = HasTokens
+        and (isnull(p.promptTokens) or (isnotnull(Prompt) and Prompt >= 0))
+        and (isnull(OutputValue) or (isnotnull(Output) and Output >= 0))
+    | extend EventSignature = tostring(pack_array(Operation, Model, Version, HasTokens,
+                                                  ValidTokens, Prompt, Output))
+    | project TimeGenerated, AccountId, SubscriptionId, Account, Deployment, Model, Version, RequestId,
+              EventSignature,
+              WorkspaceId = tostring(TenantId), HasTokens, ValidTokens,
+              Tokens = coalesce(Prompt, 0) + coalesce(Output, 0)
+);
+let MultiWorkspaceAccounts = (
+    Raw | where HasTokens
+    | summarize by AccountId, WorkspaceId
+    | summarize Workspaces = count() by AccountId
+    | where Workspaces > 1
+);
+let AmbiguousRows = toscalar(
+    Raw | where HasTokens and isempty(RequestId)
+    | join kind=inner MultiWorkspaceAccounts on AccountId
+    | count
+);
+let Identified = materialize(
+    Raw | where HasTokens and isnotempty(RequestId)
+    | summarize Copies = count(), Signatures = make_set(EventSignature, 2),
+                FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated),
+                arg_min(TimeGenerated, *) by AccountId, Deployment, RequestId
+);
+let ConflictingRequests = toscalar(
+    Identified | summarize countif(array_length(Signatures) > 1 or LastTime - FirstTime >= 1m)
+);
+let DeploymentConflicts = toscalar(
+    Raw | where HasTokens and isnotempty(RequestId)
+    | summarize Missing = countif(isempty(Deployment)), Named = countif(isnotempty(Deployment))
+        by AccountId, RequestId
+    | summarize countif(Missing > 0 and Named > 0)
+);
+let ReusedIdsInWorkspace = toscalar(
+    Raw | where HasTokens and isnotempty(RequestId)
+    | summarize Times = make_set(TimeGenerated, 2) by AccountId, Deployment, RequestId, WorkspaceId
+    | summarize countif(array_length(Times) > 1)
+);
+let DuplicateRows = toscalar(
+    Identified | summarize sum(Copies - 1)
+);
+let Deduplicated = materialize(
+    union (Identified | project-away Copies, Signatures, FirstTime, LastTime),
+          (Raw | where HasTokens and isempty(RequestId))
+);
+let InvalidRows = toscalar(
+    Raw | summarize countif(HasTokens and not(ValidTokens))
+);
+let DataValid = WindowValid and AmbiguousRows == 0 and ConflictingRequests == 0
+    and DeploymentConflicts == 0 and ReusedIdsInWorkspace == 0 and InvalidRows == 0;
+let Usage = materialize(
+    Deduplicated
+    | where DataValid and ValidTokens
+    | extend Minute = bin(TimeGenerated, 1m),
+             EntityKey = tostring(pack_array(AccountId, Deployment))
+);

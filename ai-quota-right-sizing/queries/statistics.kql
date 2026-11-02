@@ -1,0 +1,32 @@
+let Active = materialize(
+    Usage
+    | extend GroupKey = __GROUP_KEY__
+    | summarize TPM = sum(Tokens), RPM = count() by GroupKey, Minute
+);
+let Histogram =
+    union
+        (Active | summarize Weight = count() by GroupKey, TPM),
+        (Active | summarize ObservedMinutes = count() by GroupKey
+         | project GroupKey, TPM = tolong(0), Weight = CalendarMinutes - ObservedMinutes)
+    | where Weight > 0
+    | summarize Weight = sum(Weight) by GroupKey, TPM;
+let Statistics =
+    Histogram
+    | order by GroupKey asc, TPM asc
+    | serialize
+    | extend CumulativeMinutes = row_cumsum(Weight, GroupKey != prev(GroupKey))
+    | summarize ObservedTokens = sum(TPM * Weight),
+                AverageTPM = sum(todouble(TPM) * Weight) / CalendarMinutes,
+                P50TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.50)),
+                P95TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.95)),
+                P99TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.99)),
+                PeakTPM = max(TPM)
+        by GroupKey;
+Statistics
+| join kind=inner (
+    Active | summarize PeakRPM = max(RPM), ActiveMinutes = countif(TPM > 0) by GroupKey
+) on GroupKey
+| project-away GroupKey1
+| extend CalendarMinutes = CalendarMinutes, StartUTC = Start, EndUTCExclusive = End,
+         P99WithHeadroomTPM = ceiling(P99TPM * {Headroom}),
+         PeakWithHeadroomTPM = ceiling(PeakTPM * {Headroom})

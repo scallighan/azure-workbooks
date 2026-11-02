@@ -1,0 +1,667 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "name": "title",
+      "content": {
+        "json": "# Azure OpenAI deployment right-sizing\nSelect subscriptions, Foundry instances and models. Diagnostic logs are queried across **all discovered workspaces**, including centralized workspaces in other subscriptions, and deduplicated using guarded request/correlation identity before charting. Uses **Azure Metrics + Diagnostic Settings**; no collector, API keys, or custom tables."
+      }
+    },
+    {
+      "type": 9,
+      "name": "scope",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "Subscriptions",
+            "version": "KqlParameterItem/1.0",
+            "name": "Subscriptions",
+            "type": 6,
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "ResourceContainers | where type =~ 'microsoft.resources/subscriptions'\n| project value=subscriptionId, label=name | order by label asc",
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "crossComponentResources": [
+              "value::all"
+            ],
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            }
+          },
+          {
+            "id": "Accounts",
+            "version": "KqlParameterItem/1.0",
+            "name": "Accounts",
+            "type": 5,
+            "label": "Foundry instances",
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "Resources | where type =~ 'microsoft.cognitiveservices/accounts'\n| where kind in~ ('OpenAI', 'AIServices')\n| project value=id, label=strcat(name, ' / ', location, ' / ', subscriptionId)\n| order by label asc",
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "crossComponentResources": [
+              "{Subscriptions}"
+            ],
+            "typeSettings": {
+              "resourceTypeFilter": {
+                "microsoft.cognitiveservices/accounts": true
+              },
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "showDefault": false
+            },
+            "description": "Select one or more Foundry / Azure OpenAI instances in the selected subscriptions."
+          },
+          {
+            "id": "TimeRange",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "type": 4,
+            "label": "Time range",
+            "isRequired": true,
+            "value": {
+              "durationMs": 604800000
+            },
+            "typeSettings": {
+              "allowCustom": true,
+              "selectableValues": [
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 1209600000
+                },
+                {
+                  "durationMs": 2592000000
+                }
+              ]
+            }
+          },
+          {
+            "id": "LogCategory",
+            "version": "KqlParameterItem/1.0",
+            "name": "LogCategory",
+            "type": 2,
+            "label": "Diagnostic usage source",
+            "isRequired": true,
+            "value": "AzureOpenAIRequestUsage",
+            "jsonData": "[{\"value\": \"AzureOpenAIRequestUsage\", \"label\": \"AzureOpenAIRequestUsage (preferred)\"}, {\"value\": \"RequestResponse\", \"label\": \"RequestResponse (legacy)\"}]"
+          }
+        ],
+        "style": "above"
+      }
+    },
+    {
+      "type": 9,
+      "name": "workspace-discovery",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "WorkspaceDiscoverySubscriptions",
+            "version": "KqlParameterItem/1.0",
+            "name": "WorkspaceDiscoverySubscriptions",
+            "type": 6,
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "ResourceContainers | where type =~ 'microsoft.resources/subscriptions'\n| project value=subscriptionId, label=name, selected=true | order by label asc",
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "crossComponentResources": [
+              "value::all"
+            ],
+            "value": [
+              "value::all"
+            ],
+            "defaultValue": "value::all",
+            "isHiddenWhenLocked": true,
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "includeAll": true,
+              "showDefault": false
+            }
+          },
+          {
+            "id": "Workspaces",
+            "version": "KqlParameterItem/1.0",
+            "name": "Workspaces",
+            "type": 5,
+            "label": "Workspaces",
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "Resources | where type =~ 'microsoft.operationalinsights/workspaces'\n| project value=id, label=strcat(name, ' / ', subscriptionId), selected=true | order by label asc",
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "crossComponentResources": [
+              "{WorkspaceDiscoverySubscriptions}"
+            ],
+            "typeSettings": {
+              "resourceTypeFilter": {
+                "microsoft.operationalinsights/workspaces": true
+              },
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "showDefault": false,
+              "includeAll": true
+            },
+            "isHiddenWhenLocked": true,
+            "value": [
+              "value::all"
+            ],
+            "defaultValue": "value::all"
+          }
+        ],
+        "style": "above"
+      }
+    },
+    {
+      "type": 9,
+      "name": "analysis-filters",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "Models",
+            "version": "KqlParameterItem/1.0",
+            "name": "Models",
+            "type": 2,
+            "label": "Models",
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "value": [
+              "*"
+            ],
+            "query": "union isfuzzy=true\n    (datatable(Model:string)[\"*\"]),\n    (AzureDiagnostics\n     | where TimeGenerated {TimeRange}\n     | where Category == '{LogCategory}'\n     | extend AccountId=tolower(coalesce(_ResourceId, ResourceId)), p=parse_json(properties_s)\n     | where AccountId in~ ({Accounts})\n     | extend Model=iff(isempty(tostring(p.modelName)), \"(unknown model)\", tostring(p.modelName))\n     | project Model)\n| distinct Model\n| project value=Model, label=iff(Model == \"*\", \"All models\", Model)\n| order by label asc",
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces",
+            "crossComponentResources": [
+              "{Workspaces}"
+            ],
+            "timeContextFromParameter": "TimeRange",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            }
+          },
+          {
+            "id": "Headroom",
+            "version": "KqlParameterItem/1.0",
+            "name": "Headroom",
+            "type": 2,
+            "label": "Demand multiplier",
+            "isRequired": true,
+            "value": "1.3",
+            "jsonData": "[{\"value\": \"1.1\", \"label\": \"1.10x observed TPM\"}, {\"value\": \"1.2\", \"label\": \"1.20x observed TPM\"}, {\"value\": \"1.3\", \"label\": \"1.30x observed TPM\"}, {\"value\": \"1.5\", \"label\": \"1.50x observed TPM\"}, {\"value\": \"2.0\", \"label\": \"2.00x observed TPM\"}]"
+          }
+        ],
+        "style": "above"
+      }
+    },
+    {
+      "type": 1,
+      "name": "method",
+      "content": {
+        "json": "**Diagnostic analysis:** full UTC calendar minutes only; end exclusive. The latest five minutes are excluded for ingestion delay. Select at most 31 days. Statistics include unobserved minutes as zero **only under the assumption of continuous logging**. No rows is not evidence of an idle deployment. Conflicting copies or usage without an identifier in multi-workspace accounts block sizing. Correlation IDs are matched conservatively and may not uniquely identify requests. When copy timestamps differ, the earliest is used; check `CrossMinuteRequests`. Usage without a deployment is included in fleet/model totals but excluded from deployment sizing. Azure supports up to 100 workspaces per query; discovery/read permissions and service limits apply. Native metrics below use the original time selection."
+      }
+    },
+    {
+      "type": 3,
+      "name": "quality",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Data quality and effective analysis window",
+        "query": "let RequestedStart = datetime({TimeRange:startISO});\nlet RequestedEnd = datetime({TimeRange:endISO});\nlet Start = bin(RequestedStart, 1m) + iff(RequestedStart == bin(RequestedStart, 1m), 0m, 1m);\nlet End = bin(min_of(RequestedEnd, now() - 5m), 1m);\nlet CalendarMinutes = datetime_diff('minute', End, Start);\nlet WindowValid = CalendarMinutes between (1 .. 44640);\nlet TokenCount = (v:dynamic) {\n    iff(gettype(v) == \"array\", tolong(array_sum(v)), tolong(v))\n};\nlet Raw = materialize(\n    AzureDiagnostics\n    | where TimeGenerated >= Start and TimeGenerated < End\n    | where ResourceProvider =~ \"MICROSOFT.COGNITIVESERVICES\"\n    | where Category == '{LogCategory}'\n    | extend AccountId = tolower(coalesce(_ResourceId, ResourceId)),\n             p = parse_json(tostring(column_ifexists(\"properties_s\", \"\")))\n    | extend SubscriptionId = tostring(split(AccountId, \"/\")[2]),\n             Account = tostring(split(AccountId, \"/\")[8]),\n             Deployment = tostring(p.modelDeploymentName),\n             Model = iff(isempty(tostring(p.modelName)), \"(unknown model)\", tostring(p.modelName)),\n             Version = tostring(p.modelVersion),\n             ExplicitRequestId = coalesce(tostring(p.requestId), tostring(column_ifexists(\"requestId_s\", \"\"))),\n             CorrelationId = tolower(tostring(column_ifexists(\"CorrelationId\", \"\"))),\n             Operation = tostring(column_ifexists(\"OperationName\", \"\")),\n             Prompt = TokenCount(p.promptTokens),\n             OutputValue = iff(Category == \"AzureOpenAIRequestUsage\", p.generatedTokens, p.completionTokens)\n    | extend Output = TokenCount(OutputValue),\n             CorrelationId = iff(CorrelationId == \"00000000-0000-0000-0000-000000000000\", \"\", CorrelationId)\n    | extend RequestId = coalesce(ExplicitRequestId, CorrelationId)\n    | where AccountId in~ ({Accounts})\n    | where \"*\" in ({Models}) or Model in ({Models})\n    | extend HasTokens = isnotnull(p.promptTokens) or isnotnull(OutputValue)\n    | extend ValidTokens = HasTokens\n        and (isnull(p.promptTokens) or (isnotnull(Prompt) and Prompt >= 0))\n        and (isnull(OutputValue) or (isnotnull(Output) and Output >= 0))\n    | extend EventSignature = tostring(pack_array(Operation, Model, Version, HasTokens,\n                                                  ValidTokens, Prompt, Output))\n    | project TimeGenerated, AccountId, SubscriptionId, Account, Deployment, Model, Version, RequestId,\n              EventSignature,\n              WorkspaceId = tostring(TenantId), HasTokens, ValidTokens,\n              Tokens = coalesce(Prompt, 0) + coalesce(Output, 0)\n);\nlet MultiWorkspaceAccounts = (\n    Raw | where HasTokens\n    | summarize by AccountId, WorkspaceId\n    | summarize Workspaces = count() by AccountId\n    | where Workspaces > 1\n);\nlet AmbiguousRows = toscalar(\n    Raw | where HasTokens and isempty(RequestId)\n    | join kind=inner MultiWorkspaceAccounts on AccountId\n    | count\n);\nlet Identified = materialize(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Copies = count(), Signatures = make_set(EventSignature, 2),\n                FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated),\n                arg_min(TimeGenerated, *) by AccountId, Deployment, RequestId\n);\nlet ConflictingRequests = toscalar(\n    Identified | summarize countif(array_length(Signatures) > 1 or LastTime - FirstTime >= 1m)\n);\nlet DeploymentConflicts = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Missing = countif(isempty(Deployment)), Named = countif(isnotempty(Deployment))\n        by AccountId, RequestId\n    | summarize countif(Missing > 0 and Named > 0)\n);\nlet ReusedIdsInWorkspace = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Times = make_set(TimeGenerated, 2) by AccountId, Deployment, RequestId, WorkspaceId\n    | summarize countif(array_length(Times) > 1)\n);\nlet DuplicateRows = toscalar(\n    Identified | summarize sum(Copies - 1)\n);\nlet Deduplicated = materialize(\n    union (Identified | project-away Copies, Signatures, FirstTime, LastTime),\n          (Raw | where HasTokens and isempty(RequestId))\n);\nlet InvalidRows = toscalar(\n    Raw | summarize countif(HasTokens and not(ValidTokens))\n);\nlet DataValid = WindowValid and AmbiguousRows == 0 and ConflictingRequests == 0\n    and DeploymentConflicts == 0 and ReusedIdsInWorkspace == 0 and InvalidRows == 0;\nlet Usage = materialize(\n    Deduplicated\n    | where DataValid and ValidTokens\n    | extend Minute = bin(TimeGenerated, 1m),\n             EntityKey = tostring(pack_array(AccountId, Deployment))\n);\nlet SeenAccounts = toscalar(Deduplicated | where ValidTokens | summarize dcount(AccountId));\nlet UsableRows = toscalar(Deduplicated | summarize countif(ValidTokens));\nlet UnattributedRows = toscalar(Deduplicated | summarize countif(ValidTokens and isempty(Deployment)));\nlet UnattributedTokens = toscalar(Deduplicated | summarize sumif(Tokens, ValidTokens and isempty(Deployment)));\nprint Status = case(\n    not(WindowValid), \"BLOCKED: select between 1 minute and 31 days of complete minutes.\",\n    AmbiguousRows > 0, \"BLOCKED: usage without a request or correlation ID belongs to an account with logs in multiple workspaces.\",\n    ReusedIdsInWorkspace > 0, \"BLOCKED: an identifier has multiple timestamps in the same workspace. Inspect potential identifier reuse.\",\n    DeploymentConflicts > 0, \"BLOCKED: an identifier appears both with and without a deployment name. Inspect diagnostic data.\",\n    ConflictingRequests > 0, \"BLOCKED: copies disagree on operation, model, version or tokens, or have timestamps at least one minute apart.\",\n    InvalidRows > 0, \"BLOCKED: malformed tokens. Inspect diagnostic data before sizing.\",\n    UsableRows == 0, \"NO USAGE DATA: check workspace discovery/access, category, filters, and Diagnostic Settings. This does not mean zero demand.\",\n    UnattributedRows > 0, \"PARTIAL DEPLOYMENTS: usage without a deployment is included in fleet/model totals but excluded from deployment sizing. Confirm logging coverage and compare native metrics.\",\n    \"CONDITIONAL: unobserved minutes count as zero. Confirm diagnostics were enabled for the entire window; compare with native metrics.\"),\n    StartUTC = Start, EndUTCExclusive = End, CalendarMinutes = CalendarMinutes,\n    SelectedWorkspaces = array_length(dynamic([{Workspaces}])),\n    AccountsWithLogs = SeenAccounts,\n    SelectedAccounts = array_length(dynamic([{Accounts}])),\n    AccountsWithoutLogs = array_length(dynamic([{Accounts}])) - SeenAccounts,\n    UsableRows = UsableRows,\n    RowsWithoutTokens = toscalar(Raw | summarize countif(not(HasTokens))),\n    InvalidRows = InvalidRows,\n    WorkspacesWithLogs = toscalar(Raw | summarize by WorkspaceId | count),\n    AccountsInMultipleWorkspaces = toscalar(MultiWorkspaceAccounts | count),\n    DuplicateRowsRemoved = DuplicateRows, AmbiguousRowsWithoutId = AmbiguousRows,\n    ConflictingRequests = ConflictingRequests, DeploymentConflicts = DeploymentConflicts,\n    ReusedIdsInWorkspace = ReusedIdsInWorkspace,\n    TimestampShiftedRequests = toscalar(Identified | summarize countif(Copies > 1 and FirstTime != LastTime)),\n    CrossMinuteRequests = toscalar(Identified | summarize countif(bin(FirstTime, 1m) != bin(LastTime, 1m))),\n    UnattributedRows = UnattributedRows, UnattributedTokens = UnattributedTokens\n",
+        "size": 0,
+        "queryType": 0,
+        "visualization": "table",
+        "showExportToExcel": true,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspaces}"
+        ],
+        "timeContextFromParameter": "TimeRange"
+      }
+    },
+    {
+      "type": 3,
+      "name": "summary",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Observed tokens per calendar minute - selected fleet",
+        "query": "let RequestedStart = datetime({TimeRange:startISO});\nlet RequestedEnd = datetime({TimeRange:endISO});\nlet Start = bin(RequestedStart, 1m) + iff(RequestedStart == bin(RequestedStart, 1m), 0m, 1m);\nlet End = bin(min_of(RequestedEnd, now() - 5m), 1m);\nlet CalendarMinutes = datetime_diff('minute', End, Start);\nlet WindowValid = CalendarMinutes between (1 .. 44640);\nlet TokenCount = (v:dynamic) {\n    iff(gettype(v) == \"array\", tolong(array_sum(v)), tolong(v))\n};\nlet Raw = materialize(\n    AzureDiagnostics\n    | where TimeGenerated >= Start and TimeGenerated < End\n    | where ResourceProvider =~ \"MICROSOFT.COGNITIVESERVICES\"\n    | where Category == '{LogCategory}'\n    | extend AccountId = tolower(coalesce(_ResourceId, ResourceId)),\n             p = parse_json(tostring(column_ifexists(\"properties_s\", \"\")))\n    | extend SubscriptionId = tostring(split(AccountId, \"/\")[2]),\n             Account = tostring(split(AccountId, \"/\")[8]),\n             Deployment = tostring(p.modelDeploymentName),\n             Model = iff(isempty(tostring(p.modelName)), \"(unknown model)\", tostring(p.modelName)),\n             Version = tostring(p.modelVersion),\n             ExplicitRequestId = coalesce(tostring(p.requestId), tostring(column_ifexists(\"requestId_s\", \"\"))),\n             CorrelationId = tolower(tostring(column_ifexists(\"CorrelationId\", \"\"))),\n             Operation = tostring(column_ifexists(\"OperationName\", \"\")),\n             Prompt = TokenCount(p.promptTokens),\n             OutputValue = iff(Category == \"AzureOpenAIRequestUsage\", p.generatedTokens, p.completionTokens)\n    | extend Output = TokenCount(OutputValue),\n             CorrelationId = iff(CorrelationId == \"00000000-0000-0000-0000-000000000000\", \"\", CorrelationId)\n    | extend RequestId = coalesce(ExplicitRequestId, CorrelationId)\n    | where AccountId in~ ({Accounts})\n    | where \"*\" in ({Models}) or Model in ({Models})\n    | extend HasTokens = isnotnull(p.promptTokens) or isnotnull(OutputValue)\n    | extend ValidTokens = HasTokens\n        and (isnull(p.promptTokens) or (isnotnull(Prompt) and Prompt >= 0))\n        and (isnull(OutputValue) or (isnotnull(Output) and Output >= 0))\n    | extend EventSignature = tostring(pack_array(Operation, Model, Version, HasTokens,\n                                                  ValidTokens, Prompt, Output))\n    | project TimeGenerated, AccountId, SubscriptionId, Account, Deployment, Model, Version, RequestId,\n              EventSignature,\n              WorkspaceId = tostring(TenantId), HasTokens, ValidTokens,\n              Tokens = coalesce(Prompt, 0) + coalesce(Output, 0)\n);\nlet MultiWorkspaceAccounts = (\n    Raw | where HasTokens\n    | summarize by AccountId, WorkspaceId\n    | summarize Workspaces = count() by AccountId\n    | where Workspaces > 1\n);\nlet AmbiguousRows = toscalar(\n    Raw | where HasTokens and isempty(RequestId)\n    | join kind=inner MultiWorkspaceAccounts on AccountId\n    | count\n);\nlet Identified = materialize(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Copies = count(), Signatures = make_set(EventSignature, 2),\n                FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated),\n                arg_min(TimeGenerated, *) by AccountId, Deployment, RequestId\n);\nlet ConflictingRequests = toscalar(\n    Identified | summarize countif(array_length(Signatures) > 1 or LastTime - FirstTime >= 1m)\n);\nlet DeploymentConflicts = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Missing = countif(isempty(Deployment)), Named = countif(isnotempty(Deployment))\n        by AccountId, RequestId\n    | summarize countif(Missing > 0 and Named > 0)\n);\nlet ReusedIdsInWorkspace = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Times = make_set(TimeGenerated, 2) by AccountId, Deployment, RequestId, WorkspaceId\n    | summarize countif(array_length(Times) > 1)\n);\nlet DuplicateRows = toscalar(\n    Identified | summarize sum(Copies - 1)\n);\nlet Deduplicated = materialize(\n    union (Identified | project-away Copies, Signatures, FirstTime, LastTime),\n          (Raw | where HasTokens and isempty(RequestId))\n);\nlet InvalidRows = toscalar(\n    Raw | summarize countif(HasTokens and not(ValidTokens))\n);\nlet DataValid = WindowValid and AmbiguousRows == 0 and ConflictingRequests == 0\n    and DeploymentConflicts == 0 and ReusedIdsInWorkspace == 0 and InvalidRows == 0;\nlet Usage = materialize(\n    Deduplicated\n    | where DataValid and ValidTokens\n    | extend Minute = bin(TimeGenerated, 1m),\n             EntityKey = tostring(pack_array(AccountId, Deployment))\n);\nlet Active = materialize(\n    Usage\n    | extend GroupKey = \"fleet\"\n    | summarize TPM = sum(Tokens), RPM = count() by GroupKey, Minute\n);\nlet Histogram =\n    union\n        (Active | summarize Weight = count() by GroupKey, TPM),\n        (Active | summarize ObservedMinutes = count() by GroupKey\n         | project GroupKey, TPM = tolong(0), Weight = CalendarMinutes - ObservedMinutes)\n    | where Weight > 0\n    | summarize Weight = sum(Weight) by GroupKey, TPM;\nlet Statistics =\n    Histogram\n    | order by GroupKey asc, TPM asc\n    | serialize\n    | extend CumulativeMinutes = row_cumsum(Weight, GroupKey != prev(GroupKey))\n    | summarize ObservedTokens = sum(TPM * Weight),\n                AverageTPM = sum(todouble(TPM) * Weight) / CalendarMinutes,\n                P50TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.50)),\n                P95TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.95)),\n                P99TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.99)),\n                PeakTPM = max(TPM)\n        by GroupKey;\nStatistics\n| join kind=inner (\n    Active | summarize PeakRPM = max(RPM), ActiveMinutes = countif(TPM > 0) by GroupKey\n) on GroupKey\n| project-away GroupKey1\n| extend CalendarMinutes = CalendarMinutes, StartUTC = Start, EndUTCExclusive = End,\n         P99WithHeadroomTPM = ceiling(P99TPM * {Headroom}),\n         PeakWithHeadroomTPM = ceiling(PeakTPM * {Headroom})\n\n| extend Metrics=pack_array(\n    pack_array(\"Average TPM\", AverageTPM), pack_array(\"P50 TPM\", P50TPM),\n    pack_array(\"P95 TPM\", P95TPM), pack_array(\"P99 TPM\", P99TPM),\n    pack_array(\"Peak TPM\", PeakTPM), pack_array(\"Observed tokens\", ObservedTokens),\n    pack_array(\"Calendar minutes\", CalendarMinutes))\n| mv-expand Metrics\n| project Metric=tostring(Metrics[0]), Value=todouble(Metrics[1])\n",
+        "size": 0,
+        "queryType": 0,
+        "visualization": "tiles",
+        "showExportToExcel": true,
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 12,
+            "formatOptions": {
+              "palette": "auto"
+            },
+            "numberFormat": {
+              "unit": 0,
+              "options": {
+                "style": "decimal",
+                "useGrouping": true,
+                "maximumFractionDigits": 2
+              }
+            }
+          },
+          "showBorder": true
+        },
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspaces}"
+        ],
+        "timeContextFromParameter": "TimeRange"
+      }
+    },
+    {
+      "type": 3,
+      "name": "trend",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Observed TPM - one-minute resolution, selected fleet",
+        "query": "let RequestedStart = datetime({TimeRange:startISO});\nlet RequestedEnd = datetime({TimeRange:endISO});\nlet Start = bin(RequestedStart, 1m) + iff(RequestedStart == bin(RequestedStart, 1m), 0m, 1m);\nlet End = bin(min_of(RequestedEnd, now() - 5m), 1m);\nlet CalendarMinutes = datetime_diff('minute', End, Start);\nlet WindowValid = CalendarMinutes between (1 .. 44640);\nlet TokenCount = (v:dynamic) {\n    iff(gettype(v) == \"array\", tolong(array_sum(v)), tolong(v))\n};\nlet Raw = materialize(\n    AzureDiagnostics\n    | where TimeGenerated >= Start and TimeGenerated < End\n    | where ResourceProvider =~ \"MICROSOFT.COGNITIVESERVICES\"\n    | where Category == '{LogCategory}'\n    | extend AccountId = tolower(coalesce(_ResourceId, ResourceId)),\n             p = parse_json(tostring(column_ifexists(\"properties_s\", \"\")))\n    | extend SubscriptionId = tostring(split(AccountId, \"/\")[2]),\n             Account = tostring(split(AccountId, \"/\")[8]),\n             Deployment = tostring(p.modelDeploymentName),\n             Model = iff(isempty(tostring(p.modelName)), \"(unknown model)\", tostring(p.modelName)),\n             Version = tostring(p.modelVersion),\n             ExplicitRequestId = coalesce(tostring(p.requestId), tostring(column_ifexists(\"requestId_s\", \"\"))),\n             CorrelationId = tolower(tostring(column_ifexists(\"CorrelationId\", \"\"))),\n             Operation = tostring(column_ifexists(\"OperationName\", \"\")),\n             Prompt = TokenCount(p.promptTokens),\n             OutputValue = iff(Category == \"AzureOpenAIRequestUsage\", p.generatedTokens, p.completionTokens)\n    | extend Output = TokenCount(OutputValue),\n             CorrelationId = iff(CorrelationId == \"00000000-0000-0000-0000-000000000000\", \"\", CorrelationId)\n    | extend RequestId = coalesce(ExplicitRequestId, CorrelationId)\n    | where AccountId in~ ({Accounts})\n    | where \"*\" in ({Models}) or Model in ({Models})\n    | extend HasTokens = isnotnull(p.promptTokens) or isnotnull(OutputValue)\n    | extend ValidTokens = HasTokens\n        and (isnull(p.promptTokens) or (isnotnull(Prompt) and Prompt >= 0))\n        and (isnull(OutputValue) or (isnotnull(Output) and Output >= 0))\n    | extend EventSignature = tostring(pack_array(Operation, Model, Version, HasTokens,\n                                                  ValidTokens, Prompt, Output))\n    | project TimeGenerated, AccountId, SubscriptionId, Account, Deployment, Model, Version, RequestId,\n              EventSignature,\n              WorkspaceId = tostring(TenantId), HasTokens, ValidTokens,\n              Tokens = coalesce(Prompt, 0) + coalesce(Output, 0)\n);\nlet MultiWorkspaceAccounts = (\n    Raw | where HasTokens\n    | summarize by AccountId, WorkspaceId\n    | summarize Workspaces = count() by AccountId\n    | where Workspaces > 1\n);\nlet AmbiguousRows = toscalar(\n    Raw | where HasTokens and isempty(RequestId)\n    | join kind=inner MultiWorkspaceAccounts on AccountId\n    | count\n);\nlet Identified = materialize(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Copies = count(), Signatures = make_set(EventSignature, 2),\n                FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated),\n                arg_min(TimeGenerated, *) by AccountId, Deployment, RequestId\n);\nlet ConflictingRequests = toscalar(\n    Identified | summarize countif(array_length(Signatures) > 1 or LastTime - FirstTime >= 1m)\n);\nlet DeploymentConflicts = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Missing = countif(isempty(Deployment)), Named = countif(isnotempty(Deployment))\n        by AccountId, RequestId\n    | summarize countif(Missing > 0 and Named > 0)\n);\nlet ReusedIdsInWorkspace = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Times = make_set(TimeGenerated, 2) by AccountId, Deployment, RequestId, WorkspaceId\n    | summarize countif(array_length(Times) > 1)\n);\nlet DuplicateRows = toscalar(\n    Identified | summarize sum(Copies - 1)\n);\nlet Deduplicated = materialize(\n    union (Identified | project-away Copies, Signatures, FirstTime, LastTime),\n          (Raw | where HasTokens and isempty(RequestId))\n);\nlet InvalidRows = toscalar(\n    Raw | summarize countif(HasTokens and not(ValidTokens))\n);\nlet DataValid = WindowValid and AmbiguousRows == 0 and ConflictingRequests == 0\n    and DeploymentConflicts == 0 and ReusedIdsInWorkspace == 0 and InvalidRows == 0;\nlet Usage = materialize(\n    Deduplicated\n    | where DataValid and ValidTokens\n    | extend Minute = bin(TimeGenerated, 1m),\n             EntityKey = tostring(pack_array(AccountId, Deployment))\n);\nlet SafeEnd = iff(WindowValid, End - 1m, Start - 1m);\nrange Minute from Start to SafeEnd step 1m\n| where DataValid and toscalar(Usage | count) > 0\n| join kind=leftouter (\n    Usage | summarize ObservedTPM = sum(Tokens) by Minute\n) on Minute\n| project Minute, ObservedTPM = coalesce(ObservedTPM, 0)\n| order by Minute asc\n",
+        "size": 0,
+        "queryType": 0,
+        "visualization": "timechart",
+        "showExportToExcel": true,
+        "chartSettings": {
+          "xAxis": "Minute",
+          "yAxis": [
+            "ObservedTPM"
+          ]
+        },
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspaces}"
+        ],
+        "timeContextFromParameter": "TimeRange"
+      }
+    },
+    {
+      "type": 3,
+      "name": "models-summary",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Model comparison - simultaneous traffic summed before percentiles",
+        "query": "let RequestedStart = datetime({TimeRange:startISO});\nlet RequestedEnd = datetime({TimeRange:endISO});\nlet Start = bin(RequestedStart, 1m) + iff(RequestedStart == bin(RequestedStart, 1m), 0m, 1m);\nlet End = bin(min_of(RequestedEnd, now() - 5m), 1m);\nlet CalendarMinutes = datetime_diff('minute', End, Start);\nlet WindowValid = CalendarMinutes between (1 .. 44640);\nlet TokenCount = (v:dynamic) {\n    iff(gettype(v) == \"array\", tolong(array_sum(v)), tolong(v))\n};\nlet Raw = materialize(\n    AzureDiagnostics\n    | where TimeGenerated >= Start and TimeGenerated < End\n    | where ResourceProvider =~ \"MICROSOFT.COGNITIVESERVICES\"\n    | where Category == '{LogCategory}'\n    | extend AccountId = tolower(coalesce(_ResourceId, ResourceId)),\n             p = parse_json(tostring(column_ifexists(\"properties_s\", \"\")))\n    | extend SubscriptionId = tostring(split(AccountId, \"/\")[2]),\n             Account = tostring(split(AccountId, \"/\")[8]),\n             Deployment = tostring(p.modelDeploymentName),\n             Model = iff(isempty(tostring(p.modelName)), \"(unknown model)\", tostring(p.modelName)),\n             Version = tostring(p.modelVersion),\n             ExplicitRequestId = coalesce(tostring(p.requestId), tostring(column_ifexists(\"requestId_s\", \"\"))),\n             CorrelationId = tolower(tostring(column_ifexists(\"CorrelationId\", \"\"))),\n             Operation = tostring(column_ifexists(\"OperationName\", \"\")),\n             Prompt = TokenCount(p.promptTokens),\n             OutputValue = iff(Category == \"AzureOpenAIRequestUsage\", p.generatedTokens, p.completionTokens)\n    | extend Output = TokenCount(OutputValue),\n             CorrelationId = iff(CorrelationId == \"00000000-0000-0000-0000-000000000000\", \"\", CorrelationId)\n    | extend RequestId = coalesce(ExplicitRequestId, CorrelationId)\n    | where AccountId in~ ({Accounts})\n    | where \"*\" in ({Models}) or Model in ({Models})\n    | extend HasTokens = isnotnull(p.promptTokens) or isnotnull(OutputValue)\n    | extend ValidTokens = HasTokens\n        and (isnull(p.promptTokens) or (isnotnull(Prompt) and Prompt >= 0))\n        and (isnull(OutputValue) or (isnotnull(Output) and Output >= 0))\n    | extend EventSignature = tostring(pack_array(Operation, Model, Version, HasTokens,\n                                                  ValidTokens, Prompt, Output))\n    | project TimeGenerated, AccountId, SubscriptionId, Account, Deployment, Model, Version, RequestId,\n              EventSignature,\n              WorkspaceId = tostring(TenantId), HasTokens, ValidTokens,\n              Tokens = coalesce(Prompt, 0) + coalesce(Output, 0)\n);\nlet MultiWorkspaceAccounts = (\n    Raw | where HasTokens\n    | summarize by AccountId, WorkspaceId\n    | summarize Workspaces = count() by AccountId\n    | where Workspaces > 1\n);\nlet AmbiguousRows = toscalar(\n    Raw | where HasTokens and isempty(RequestId)\n    | join kind=inner MultiWorkspaceAccounts on AccountId\n    | count\n);\nlet Identified = materialize(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Copies = count(), Signatures = make_set(EventSignature, 2),\n                FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated),\n                arg_min(TimeGenerated, *) by AccountId, Deployment, RequestId\n);\nlet ConflictingRequests = toscalar(\n    Identified | summarize countif(array_length(Signatures) > 1 or LastTime - FirstTime >= 1m)\n);\nlet DeploymentConflicts = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Missing = countif(isempty(Deployment)), Named = countif(isnotempty(Deployment))\n        by AccountId, RequestId\n    | summarize countif(Missing > 0 and Named > 0)\n);\nlet ReusedIdsInWorkspace = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Times = make_set(TimeGenerated, 2) by AccountId, Deployment, RequestId, WorkspaceId\n    | summarize countif(array_length(Times) > 1)\n);\nlet DuplicateRows = toscalar(\n    Identified | summarize sum(Copies - 1)\n);\nlet Deduplicated = materialize(\n    union (Identified | project-away Copies, Signatures, FirstTime, LastTime),\n          (Raw | where HasTokens and isempty(RequestId))\n);\nlet InvalidRows = toscalar(\n    Raw | summarize countif(HasTokens and not(ValidTokens))\n);\nlet DataValid = WindowValid and AmbiguousRows == 0 and ConflictingRequests == 0\n    and DeploymentConflicts == 0 and ReusedIdsInWorkspace == 0 and InvalidRows == 0;\nlet Usage = materialize(\n    Deduplicated\n    | where DataValid and ValidTokens\n    | extend Minute = bin(TimeGenerated, 1m),\n             EntityKey = tostring(pack_array(AccountId, Deployment))\n);\nlet Active = materialize(\n    Usage\n    | extend GroupKey = tostring(pack_array(Model, Version))\n    | summarize TPM = sum(Tokens), RPM = count() by GroupKey, Minute\n);\nlet Histogram =\n    union\n        (Active | summarize Weight = count() by GroupKey, TPM),\n        (Active | summarize ObservedMinutes = count() by GroupKey\n         | project GroupKey, TPM = tolong(0), Weight = CalendarMinutes - ObservedMinutes)\n    | where Weight > 0\n    | summarize Weight = sum(Weight) by GroupKey, TPM;\nlet Statistics =\n    Histogram\n    | order by GroupKey asc, TPM asc\n    | serialize\n    | extend CumulativeMinutes = row_cumsum(Weight, GroupKey != prev(GroupKey))\n    | summarize ObservedTokens = sum(TPM * Weight),\n                AverageTPM = sum(todouble(TPM) * Weight) / CalendarMinutes,\n                P50TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.50)),\n                P95TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.95)),\n                P99TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.99)),\n                PeakTPM = max(TPM)\n        by GroupKey;\nStatistics\n| join kind=inner (\n    Active | summarize PeakRPM = max(RPM), ActiveMinutes = countif(TPM > 0) by GroupKey\n) on GroupKey\n| project-away GroupKey1\n| extend CalendarMinutes = CalendarMinutes, StartUTC = Start, EndUTCExclusive = End,\n         P99WithHeadroomTPM = ceiling(P99TPM * {Headroom}),\n         PeakWithHeadroomTPM = ceiling(PeakTPM * {Headroom})\n\n| extend Key=parse_json(GroupKey)\n| project Model=tostring(Key[0]), Version=tostring(Key[1]), AverageTPM, P50TPM,\n          P95TPM, P99TPM, PeakTPM, ObservedTokens, ActiveMinutes, CalendarMinutes\n| order by PeakTPM desc\n",
+        "size": 0,
+        "queryType": 0,
+        "visualization": "table",
+        "showExportToExcel": true,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspaces}"
+        ],
+        "timeContextFromParameter": "TimeRange"
+      }
+    },
+    {
+      "type": 3,
+      "name": "deployment-summary",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Physical deployment demand and planning targets",
+        "query": "let RequestedStart = datetime({TimeRange:startISO});\nlet RequestedEnd = datetime({TimeRange:endISO});\nlet Start = bin(RequestedStart, 1m) + iff(RequestedStart == bin(RequestedStart, 1m), 0m, 1m);\nlet End = bin(min_of(RequestedEnd, now() - 5m), 1m);\nlet CalendarMinutes = datetime_diff('minute', End, Start);\nlet WindowValid = CalendarMinutes between (1 .. 44640);\nlet TokenCount = (v:dynamic) {\n    iff(gettype(v) == \"array\", tolong(array_sum(v)), tolong(v))\n};\nlet Raw = materialize(\n    AzureDiagnostics\n    | where TimeGenerated >= Start and TimeGenerated < End\n    | where ResourceProvider =~ \"MICROSOFT.COGNITIVESERVICES\"\n    | where Category == '{LogCategory}'\n    | extend AccountId = tolower(coalesce(_ResourceId, ResourceId)),\n             p = parse_json(tostring(column_ifexists(\"properties_s\", \"\")))\n    | extend SubscriptionId = tostring(split(AccountId, \"/\")[2]),\n             Account = tostring(split(AccountId, \"/\")[8]),\n             Deployment = tostring(p.modelDeploymentName),\n             Model = iff(isempty(tostring(p.modelName)), \"(unknown model)\", tostring(p.modelName)),\n             Version = tostring(p.modelVersion),\n             ExplicitRequestId = coalesce(tostring(p.requestId), tostring(column_ifexists(\"requestId_s\", \"\"))),\n             CorrelationId = tolower(tostring(column_ifexists(\"CorrelationId\", \"\"))),\n             Operation = tostring(column_ifexists(\"OperationName\", \"\")),\n             Prompt = TokenCount(p.promptTokens),\n             OutputValue = iff(Category == \"AzureOpenAIRequestUsage\", p.generatedTokens, p.completionTokens)\n    | extend Output = TokenCount(OutputValue),\n             CorrelationId = iff(CorrelationId == \"00000000-0000-0000-0000-000000000000\", \"\", CorrelationId)\n    | extend RequestId = coalesce(ExplicitRequestId, CorrelationId)\n    | where AccountId in~ ({Accounts})\n    | where \"*\" in ({Models}) or Model in ({Models})\n    | extend HasTokens = isnotnull(p.promptTokens) or isnotnull(OutputValue)\n    | extend ValidTokens = HasTokens\n        and (isnull(p.promptTokens) or (isnotnull(Prompt) and Prompt >= 0))\n        and (isnull(OutputValue) or (isnotnull(Output) and Output >= 0))\n    | extend EventSignature = tostring(pack_array(Operation, Model, Version, HasTokens,\n                                                  ValidTokens, Prompt, Output))\n    | project TimeGenerated, AccountId, SubscriptionId, Account, Deployment, Model, Version, RequestId,\n              EventSignature,\n              WorkspaceId = tostring(TenantId), HasTokens, ValidTokens,\n              Tokens = coalesce(Prompt, 0) + coalesce(Output, 0)\n);\nlet MultiWorkspaceAccounts = (\n    Raw | where HasTokens\n    | summarize by AccountId, WorkspaceId\n    | summarize Workspaces = count() by AccountId\n    | where Workspaces > 1\n);\nlet AmbiguousRows = toscalar(\n    Raw | where HasTokens and isempty(RequestId)\n    | join kind=inner MultiWorkspaceAccounts on AccountId\n    | count\n);\nlet Identified = materialize(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Copies = count(), Signatures = make_set(EventSignature, 2),\n                FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated),\n                arg_min(TimeGenerated, *) by AccountId, Deployment, RequestId\n);\nlet ConflictingRequests = toscalar(\n    Identified | summarize countif(array_length(Signatures) > 1 or LastTime - FirstTime >= 1m)\n);\nlet DeploymentConflicts = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Missing = countif(isempty(Deployment)), Named = countif(isnotempty(Deployment))\n        by AccountId, RequestId\n    | summarize countif(Missing > 0 and Named > 0)\n);\nlet ReusedIdsInWorkspace = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Times = make_set(TimeGenerated, 2) by AccountId, Deployment, RequestId, WorkspaceId\n    | summarize countif(array_length(Times) > 1)\n);\nlet DuplicateRows = toscalar(\n    Identified | summarize sum(Copies - 1)\n);\nlet Deduplicated = materialize(\n    union (Identified | project-away Copies, Signatures, FirstTime, LastTime),\n          (Raw | where HasTokens and isempty(RequestId))\n);\nlet InvalidRows = toscalar(\n    Raw | summarize countif(HasTokens and not(ValidTokens))\n);\nlet DataValid = WindowValid and AmbiguousRows == 0 and ConflictingRequests == 0\n    and DeploymentConflicts == 0 and ReusedIdsInWorkspace == 0 and InvalidRows == 0;\nlet Usage = materialize(\n    Deduplicated\n    | where DataValid and ValidTokens\n    | extend Minute = bin(TimeGenerated, 1m),\n             EntityKey = tostring(pack_array(AccountId, Deployment))\n);\nlet Active = materialize(\n    Usage\n    | extend GroupKey = EntityKey\n    | summarize TPM = sum(Tokens), RPM = count() by GroupKey, Minute\n);\nlet Histogram =\n    union\n        (Active | summarize Weight = count() by GroupKey, TPM),\n        (Active | summarize ObservedMinutes = count() by GroupKey\n         | project GroupKey, TPM = tolong(0), Weight = CalendarMinutes - ObservedMinutes)\n    | where Weight > 0\n    | summarize Weight = sum(Weight) by GroupKey, TPM;\nlet Statistics =\n    Histogram\n    | order by GroupKey asc, TPM asc\n    | serialize\n    | extend CumulativeMinutes = row_cumsum(Weight, GroupKey != prev(GroupKey))\n    | summarize ObservedTokens = sum(TPM * Weight),\n                AverageTPM = sum(todouble(TPM) * Weight) / CalendarMinutes,\n                P50TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.50)),\n                P95TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.95)),\n                P99TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.99)),\n                PeakTPM = max(TPM)\n        by GroupKey;\nStatistics\n| join kind=inner (\n    Active | summarize PeakRPM = max(RPM), ActiveMinutes = countif(TPM > 0) by GroupKey\n) on GroupKey\n| project-away GroupKey1\n| extend CalendarMinutes = CalendarMinutes, StartUTC = Start, EndUTCExclusive = End,\n         P99WithHeadroomTPM = ceiling(P99TPM * {Headroom}),\n         PeakWithHeadroomTPM = ceiling(PeakTPM * {Headroom})\n\n| join kind=inner (\n    Usage | summarize Models=make_set(Model, 100), Versions=make_set(Version, 100) by EntityKey\n) on $left.GroupKey == $right.EntityKey\n| extend Key=parse_json(GroupKey)\n| where isnotempty(tostring(Key[1]))\n| project AccountId=tostring(Key[0]), Deployment=tostring(Key[1]),\n          Models, Versions,\n          AverageTPM, P50TPM, P95TPM, P99TPM, PeakTPM, PeakRPM,\n          P99WithHeadroomTPM, PeakWithHeadroomTPM, ObservedTokens, ActiveMinutes, CalendarMinutes\n| order by PeakTPM desc\n",
+        "size": 0,
+        "queryType": 0,
+        "visualization": "table",
+        "showExportToExcel": true,
+        "gridSettings": {
+          "filter": true,
+          "rowLimit": 10000
+        },
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspaces}"
+        ],
+        "timeContextFromParameter": "TimeRange"
+      }
+    },
+    {
+      "type": 1,
+      "name": "sizing-notes",
+      "content": {
+        "json": "**Planning targets are not automatic resize recommendations.** `P99WithHeadroomTPM` and `PeakWithHeadroomTPM` multiply observed raw-token TPM by the selected demand multiplier. P99 can be zero for sparse workloads; check peak, RPM, 429s, latency, expected growth and failover before reducing capacity. Limits are per deployment; fleet/model totals are not a fungible quota pool."
+      }
+    },
+    {
+      "type": 1,
+      "name": "metrics-title",
+      "content": {
+        "json": "## Native Azure Metrics\nThese remain the service-side cross-check when diagnostic coverage is incomplete. Split by deployment; each account is queried separately. Chart totals are tokens **per displayed bucket**, not TPM when Azure selects a grain larger than one minute. Select PT1M in edit mode for a short window when comparing minute peaks. Up to 100 accounts and 100 series per metric are requested; narrow scope if Azure truncates or throttles. All models includes deployments not yet present in logs. PTU utilization is a different measure from raw-token TPM."
+      }
+    },
+    {
+      "type": 10,
+      "name": "native-tokens",
+      "content": {
+        "version": "MetricsItem/2.0",
+        "chartId": "native-tokens",
+        "title": "Processed inference tokens (sum per metric bucket)",
+        "size": 0,
+        "chartType": 0,
+        "resourceType": "microsoft.cognitiveservices/accounts",
+        "resourceIds": [
+          "{Accounts}"
+        ],
+        "resourceParameter": "Accounts",
+        "resourceLimit": 100,
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "metrics": [
+          {
+            "namespace": "microsoft.cognitiveservices/accounts",
+            "metric": "microsoft.cognitiveservices/accounts-Azure OpenAI - Usage-TokenTransaction",
+            "aggregation": 1,
+            "splitBy": [
+              "ModelDeploymentName"
+            ],
+            "splitByLimit": 100,
+            "filters": [
+              {
+                "key": "FeatureName",
+                "operator": 0,
+                "values": [],
+                "valueParam": "Models"
+              }
+            ]
+          }
+        ],
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 10,
+      "name": "native-requests",
+      "content": {
+        "version": "MetricsItem/2.0",
+        "chartId": "native-requests",
+        "title": "Requests (sum per metric bucket)",
+        "size": 0,
+        "chartType": 0,
+        "resourceType": "microsoft.cognitiveservices/accounts",
+        "resourceIds": [
+          "{Accounts}"
+        ],
+        "resourceParameter": "Accounts",
+        "resourceLimit": 100,
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "metrics": [
+          {
+            "namespace": "microsoft.cognitiveservices/accounts",
+            "metric": "microsoft.cognitiveservices/accounts-Azure OpenAI - HTTP Requests-AzureOpenAIRequests",
+            "aggregation": 1,
+            "splitBy": [
+              "ModelDeploymentName"
+            ],
+            "splitByLimit": 100,
+            "filters": [
+              {
+                "key": "ModelName",
+                "operator": 0,
+                "values": [],
+                "valueParam": "Models"
+              }
+            ]
+          }
+        ],
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 10,
+      "name": "native-429",
+      "content": {
+        "version": "MetricsItem/2.0",
+        "chartId": "native-429",
+        "title": "Throttled requests - HTTP 429",
+        "size": 0,
+        "chartType": 0,
+        "resourceType": "microsoft.cognitiveservices/accounts",
+        "resourceIds": [
+          "{Accounts}"
+        ],
+        "resourceParameter": "Accounts",
+        "resourceLimit": 100,
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "metrics": [
+          {
+            "namespace": "microsoft.cognitiveservices/accounts",
+            "metric": "microsoft.cognitiveservices/accounts-Azure OpenAI - HTTP Requests-AzureOpenAIRequests",
+            "aggregation": 1,
+            "splitBy": [
+              "ModelDeploymentName"
+            ],
+            "splitByLimit": 100,
+            "filters": [
+              {
+                "key": "ModelName",
+                "operator": 0,
+                "values": [],
+                "valueParam": "Models"
+              },
+              {
+                "key": "StatusCode",
+                "operator": 0,
+                "values": [
+                  "429"
+                ]
+              }
+            ]
+          }
+        ],
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 10,
+      "name": "native-ptu",
+      "content": {
+        "version": "MetricsItem/2.0",
+        "chartId": "native-ptu",
+        "title": "PTU utilization V2 - maximum, not raw-token utilization",
+        "size": 0,
+        "chartType": 0,
+        "resourceType": "microsoft.cognitiveservices/accounts",
+        "resourceIds": [
+          "{Accounts}"
+        ],
+        "resourceParameter": "Accounts",
+        "resourceLimit": 100,
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "metrics": [
+          {
+            "namespace": "microsoft.cognitiveservices/accounts",
+            "metric": "microsoft.cognitiveservices/accounts-Azure OpenAI - Usage-AzureOpenAIProvisionedManagedUtilizationV2",
+            "aggregation": 3,
+            "splitBy": [
+              "ModelDeploymentName"
+            ],
+            "splitByLimit": 100,
+            "filters": [
+              {
+                "key": "ModelName",
+                "operator": 0,
+                "values": [],
+                "valueParam": "Models"
+              }
+            ]
+          }
+        ],
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 10,
+      "name": "native-latency",
+      "content": {
+        "version": "MetricsItem/2.0",
+        "chartId": "native-latency",
+        "title": "Time to response (milliseconds, average)",
+        "size": 0,
+        "chartType": 0,
+        "resourceType": "microsoft.cognitiveservices/accounts",
+        "resourceIds": [
+          "{Accounts}"
+        ],
+        "resourceParameter": "Accounts",
+        "resourceLimit": 100,
+        "timeContext": {
+          "durationMs": 0
+        },
+        "timeContextFromParameter": "TimeRange",
+        "metrics": [
+          {
+            "namespace": "microsoft.cognitiveservices/accounts",
+            "metric": "microsoft.cognitiveservices/accounts-Azure OpenAI - Latency-AzureOpenAITimeToResponse",
+            "aggregation": 4,
+            "splitBy": [
+              "ModelDeploymentName"
+            ],
+            "splitByLimit": 100,
+            "filters": [
+              {
+                "key": "ModelName",
+                "operator": 0,
+                "values": [],
+                "valueParam": "Models"
+              }
+            ]
+          }
+        ],
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 1,
+      "name": "inventory-title",
+      "content": {
+        "json": "## Live capacity drilldown\nChoose one account from the multi-account scope to compare observed demand with live deployment allocation. Inventory includes **all models** in this account. A blank demand value means no usable rows under the current model/category filters, **not zero use**. Inventory is current state, not a historical snapshot."
+      }
+    },
+    {
+      "type": 9,
+      "name": "capacity-scope",
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "CapacityAccount",
+            "version": "KqlParameterItem/1.0",
+            "name": "CapacityAccount",
+            "type": 5,
+            "label": "Capacity drilldown account",
+            "isRequired": true,
+            "query": "Resources | where type =~ 'microsoft.cognitiveservices/accounts'\n| where id in~ ({Accounts}) | order by name asc\n| project value=id, label=name",
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "crossComponentResources": [
+              "{Subscriptions}"
+            ],
+            "defaultValue": "value::1",
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::1"
+              ],
+              "showDefault": false
+            }
+          }
+        ],
+        "style": "above"
+      }
+    },
+    {
+      "type": 3,
+      "name": "inventory",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Current deployment allocation - selected account, all models",
+        "query": "{\"version\": \"ARMEndpoint/1.0\", \"method\": \"GETARRAY\", \"path\": \"{CapacityAccount}/deployments\", \"urlParams\": [{\"key\": \"api-version\", \"value\": \"2024-10-01\"}], \"transformers\": [{\"type\": \"jsonpath\", \"settings\": {\"tablePath\": \"$..[?(@.type == 'Microsoft.CognitiveServices/accounts/deployments')]\", \"columns\": [{\"columnid\": \"Deployment\", \"path\": \"$.name\", \"columnType\": \"string\"}, {\"columnid\": \"ConfiguredModel\", \"path\": \"$.properties.model.name\", \"columnType\": \"string\"}, {\"columnid\": \"ConfiguredVersion\", \"path\": \"$.properties.model.version\", \"columnType\": \"string\"}, {\"columnid\": \"SKU\", \"path\": \"$.sku.name\", \"columnType\": \"string\"}, {\"columnid\": \"CapacityUnits\", \"path\": \"$.sku.capacity\", \"columnType\": \"real\"}, {\"columnid\": \"AllocatedTPM\", \"path\": \"$.properties.rateLimits[?(@.key == 'token' && @.renewalPeriod == 60)].count\", \"columnType\": \"real\"}, {\"columnid\": \"RequestLimit\", \"path\": \"$.properties.rateLimits[?(@.key == 'request')].count\", \"columnType\": \"real\"}, {\"columnid\": \"RequestWindowSeconds\", \"path\": \"$.properties.rateLimits[?(@.key == 'request')].renewalPeriod\", \"columnType\": \"real\"}, {\"columnid\": \"ProvisioningState\", \"path\": \"$.properties.provisioningState\", \"columnType\": \"string\"}]}}]}",
+        "size": 0,
+        "queryType": 12,
+        "visualization": "table",
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 3,
+      "name": "focus-demand",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Selected account diagnostic demand",
+        "query": "let RequestedStart = datetime({TimeRange:startISO});\nlet RequestedEnd = datetime({TimeRange:endISO});\nlet Start = bin(RequestedStart, 1m) + iff(RequestedStart == bin(RequestedStart, 1m), 0m, 1m);\nlet End = bin(min_of(RequestedEnd, now() - 5m), 1m);\nlet CalendarMinutes = datetime_diff('minute', End, Start);\nlet WindowValid = CalendarMinutes between (1 .. 44640);\nlet TokenCount = (v:dynamic) {\n    iff(gettype(v) == \"array\", tolong(array_sum(v)), tolong(v))\n};\nlet Raw = materialize(\n    AzureDiagnostics\n    | where TimeGenerated >= Start and TimeGenerated < End\n    | where ResourceProvider =~ \"MICROSOFT.COGNITIVESERVICES\"\n    | where Category == '{LogCategory}'\n    | extend AccountId = tolower(coalesce(_ResourceId, ResourceId)),\n             p = parse_json(tostring(column_ifexists(\"properties_s\", \"\")))\n    | extend SubscriptionId = tostring(split(AccountId, \"/\")[2]),\n             Account = tostring(split(AccountId, \"/\")[8]),\n             Deployment = tostring(p.modelDeploymentName),\n             Model = iff(isempty(tostring(p.modelName)), \"(unknown model)\", tostring(p.modelName)),\n             Version = tostring(p.modelVersion),\n             ExplicitRequestId = coalesce(tostring(p.requestId), tostring(column_ifexists(\"requestId_s\", \"\"))),\n             CorrelationId = tolower(tostring(column_ifexists(\"CorrelationId\", \"\"))),\n             Operation = tostring(column_ifexists(\"OperationName\", \"\")),\n             Prompt = TokenCount(p.promptTokens),\n             OutputValue = iff(Category == \"AzureOpenAIRequestUsage\", p.generatedTokens, p.completionTokens)\n    | extend Output = TokenCount(OutputValue),\n             CorrelationId = iff(CorrelationId == \"00000000-0000-0000-0000-000000000000\", \"\", CorrelationId)\n    | extend RequestId = coalesce(ExplicitRequestId, CorrelationId)\n    | where AccountId in~ ({Accounts})\n    | where \"*\" in ({Models}) or Model in ({Models})\n    | extend HasTokens = isnotnull(p.promptTokens) or isnotnull(OutputValue)\n    | extend ValidTokens = HasTokens\n        and (isnull(p.promptTokens) or (isnotnull(Prompt) and Prompt >= 0))\n        and (isnull(OutputValue) or (isnotnull(Output) and Output >= 0))\n    | extend EventSignature = tostring(pack_array(Operation, Model, Version, HasTokens,\n                                                  ValidTokens, Prompt, Output))\n    | project TimeGenerated, AccountId, SubscriptionId, Account, Deployment, Model, Version, RequestId,\n              EventSignature,\n              WorkspaceId = tostring(TenantId), HasTokens, ValidTokens,\n              Tokens = coalesce(Prompt, 0) + coalesce(Output, 0)\n);\nlet MultiWorkspaceAccounts = (\n    Raw | where HasTokens\n    | summarize by AccountId, WorkspaceId\n    | summarize Workspaces = count() by AccountId\n    | where Workspaces > 1\n);\nlet AmbiguousRows = toscalar(\n    Raw | where HasTokens and isempty(RequestId)\n    | join kind=inner MultiWorkspaceAccounts on AccountId\n    | count\n);\nlet Identified = materialize(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Copies = count(), Signatures = make_set(EventSignature, 2),\n                FirstTime = min(TimeGenerated), LastTime = max(TimeGenerated),\n                arg_min(TimeGenerated, *) by AccountId, Deployment, RequestId\n);\nlet ConflictingRequests = toscalar(\n    Identified | summarize countif(array_length(Signatures) > 1 or LastTime - FirstTime >= 1m)\n);\nlet DeploymentConflicts = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Missing = countif(isempty(Deployment)), Named = countif(isnotempty(Deployment))\n        by AccountId, RequestId\n    | summarize countif(Missing > 0 and Named > 0)\n);\nlet ReusedIdsInWorkspace = toscalar(\n    Raw | where HasTokens and isnotempty(RequestId)\n    | summarize Times = make_set(TimeGenerated, 2) by AccountId, Deployment, RequestId, WorkspaceId\n    | summarize countif(array_length(Times) > 1)\n);\nlet DuplicateRows = toscalar(\n    Identified | summarize sum(Copies - 1)\n);\nlet Deduplicated = materialize(\n    union (Identified | project-away Copies, Signatures, FirstTime, LastTime),\n          (Raw | where HasTokens and isempty(RequestId))\n);\nlet InvalidRows = toscalar(\n    Raw | summarize countif(HasTokens and not(ValidTokens))\n);\nlet DataValid = WindowValid and AmbiguousRows == 0 and ConflictingRequests == 0\n    and DeploymentConflicts == 0 and ReusedIdsInWorkspace == 0 and InvalidRows == 0;\nlet Usage = materialize(\n    Deduplicated\n    | where DataValid and ValidTokens\n    | extend Minute = bin(TimeGenerated, 1m),\n             EntityKey = tostring(pack_array(AccountId, Deployment))\n);\nlet Active = materialize(\n    Usage\n    | extend GroupKey = EntityKey\n    | summarize TPM = sum(Tokens), RPM = count() by GroupKey, Minute\n);\nlet Histogram =\n    union\n        (Active | summarize Weight = count() by GroupKey, TPM),\n        (Active | summarize ObservedMinutes = count() by GroupKey\n         | project GroupKey, TPM = tolong(0), Weight = CalendarMinutes - ObservedMinutes)\n    | where Weight > 0\n    | summarize Weight = sum(Weight) by GroupKey, TPM;\nlet Statistics =\n    Histogram\n    | order by GroupKey asc, TPM asc\n    | serialize\n    | extend CumulativeMinutes = row_cumsum(Weight, GroupKey != prev(GroupKey))\n    | summarize ObservedTokens = sum(TPM * Weight),\n                AverageTPM = sum(todouble(TPM) * Weight) / CalendarMinutes,\n                P50TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.50)),\n                P95TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.95)),\n                P99TPM = minif(TPM, CumulativeMinutes >= ceiling(CalendarMinutes * 0.99)),\n                PeakTPM = max(TPM)\n        by GroupKey;\nStatistics\n| join kind=inner (\n    Active | summarize PeakRPM = max(RPM), ActiveMinutes = countif(TPM > 0) by GroupKey\n) on GroupKey\n| project-away GroupKey1\n| extend CalendarMinutes = CalendarMinutes, StartUTC = Start, EndUTCExclusive = End,\n         P99WithHeadroomTPM = ceiling(P99TPM * {Headroom}),\n         PeakWithHeadroomTPM = ceiling(PeakTPM * {Headroom})\n\n| join kind=inner (\n    Usage | summarize Models=make_set(Model, 100), Versions=make_set(Version, 100) by EntityKey\n) on $left.GroupKey == $right.EntityKey\n| extend Key=parse_json(GroupKey)\n| where isnotempty(tostring(Key[1]))\n| project AccountId=tostring(Key[0]), Deployment=tostring(Key[1]),\n          Models, Versions,\n          AverageTPM, P50TPM, P95TPM, P99TPM, PeakTPM, PeakRPM,\n          P99WithHeadroomTPM, PeakWithHeadroomTPM, ObservedTokens, ActiveMinutes, CalendarMinutes\n| order by PeakTPM desc\n\n| where AccountId =~ '{CapacityAccount}'\n| project Deployment, AverageTPM, PeakTPM, P99WithHeadroomTPM, PeakWithHeadroomTPM,\n          VersionsInWindow=array_length(Versions)\n",
+        "size": 0,
+        "queryType": 0,
+        "visualization": "table",
+        "showExportToExcel": true,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspaces}"
+        ],
+        "timeContextFromParameter": "TimeRange"
+      }
+    },
+    {
+      "type": 3,
+      "name": "capacity-comparison",
+      "content": {
+        "version": "KqlItem/1.0",
+        "title": "Allocation vs observed planning targets",
+        "query": "{\"version\": \"Merge/1.0\", \"merges\": [{\"id\": \"capacity-demand\", \"mergeType\": \"leftouter\", \"leftTable\": \"inventory\", \"rightTable\": \"focus-demand\", \"leftColumn\": \"Deployment\", \"rightColumn\": \"Deployment\"}], \"projectRename\": [{\"originalName\": \"[inventory].Deployment\", \"mergedName\": \"Deployment\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[inventory].ConfiguredModel\", \"mergedName\": \"ConfiguredModel\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[inventory].ConfiguredVersion\", \"mergedName\": \"ConfiguredVersion\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[inventory].SKU\", \"mergedName\": \"SKU\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[inventory].CapacityUnits\", \"mergedName\": \"CapacityUnits\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[inventory].AllocatedTPM\", \"mergedName\": \"AllocatedTPM\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[focus-demand].AverageTPM\", \"mergedName\": \"AverageTPM\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[focus-demand].P99WithHeadroomTPM\", \"mergedName\": \"P99WithHeadroomTPM\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[focus-demand].PeakWithHeadroomTPM\", \"mergedName\": \"PeakWithHeadroomTPM\", \"fromId\": \"capacity-demand\"}, {\"originalName\": \"[focus-demand].VersionsInWindow\", \"mergedName\": \"VersionsInWindow\", \"fromId\": \"capacity-demand\"}]}",
+        "size": 0,
+        "queryType": 7,
+        "visualization": "table",
+        "showExportToExcel": true
+      }
+    },
+    {
+      "type": 1,
+      "name": "capacity-notes",
+      "content": {
+        "json": "`AllocatedTPM` comes from the explicit token rate limit with a 60-second renewal period; missing limits stay blank. `CapacityUnits` are not universally TPM: provisioned SKUs use PTUs. Request limits may have shorter renewal windows; read `RequestWindowSeconds` before comparing with RPM. Traffic across model versions is combined for each physical deployment; historical allocations are not reconstructed. Do not interpret the ratio of observed tokens to allocation as Azure admission-rate utilization. Validate PTU changes with utilization V2, latency and load tests; no generic TPM-to-PTU conversion is applied."
+      }
+    }
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}

@@ -1,0 +1,513 @@
+{
+  "version": "Notebook/1.0",
+  "items": [
+    {
+      "type": 1,
+      "content": {
+        "json": "# Azure AI usage and cost\nCorrelates Azure AI diagnostic token usage with Azure Cost Management actual cost for the selected subscription, workspaces, and time range."
+      },
+      "name": "title"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "subscription-parameter",
+            "version": "KqlParameterItem/1.0",
+            "name": "Subscription",
+            "type": 6,
+            "description": "Subscription used to discover Log Analytics workspaces and query Azure Cost Management.",
+            "isRequired": true,
+            "query": "Resources\n| where type =~ 'microsoft.operationalinsights/workspaces'\n| summarize Count = count() by subscriptionId\n| order by Count desc\n| extend selected = row_number() == 1\n| project value = subscriptionId, label = subscriptionId, selected",
+            "crossComponentResources": [
+              "value::selected"
+            ],
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "typeSettings": {
+              "additionalResourceOptions": [],
+              "showDefault": false
+            }
+          },
+          {
+            "id": "workspace-parameter",
+            "version": "KqlParameterItem/1.0",
+            "name": "Workspace",
+            "label": "Log Analytics workspace",
+            "type": 5,
+            "description": "Log Analytics workspaces in the selected subscription.",
+            "isRequired": true,
+            "multiSelect": true,
+            "query": "Resources\n| where type =~ 'microsoft.operationalinsights/workspaces'\n| project value = id, label = name, selected = true\n| order by label asc",
+            "crossComponentResources": [
+              "{Subscription}"
+            ],
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "includeAll": true,
+              "showDefault": false
+            },
+            "value": [
+              "value::all"
+            ],
+            "quote": "'",
+            "delimiter": ",",
+            "defaultValue": "value::all"
+          },
+          {
+            "id": "time-range-parameter",
+            "version": "KqlParameterItem/1.0",
+            "name": "TimeRange",
+            "label": "Time range",
+            "type": 4,
+            "isRequired": true,
+            "value": {
+              "durationMs": 2592000000
+            },
+            "typeSettings": {
+              "selectableValues": [
+                {
+                  "durationMs": 86400000
+                },
+                {
+                  "durationMs": 604800000
+                },
+                {
+                  "durationMs": 2592000000
+                },
+                {
+                  "durationMs": 7776000000
+                }
+              ],
+              "allowCustom": true
+            }
+          },
+          {
+            "id": "azure-resource-identity-directory-parameter",
+            "version": "KqlParameterItem/1.0",
+            "name": "AzureResourceIdentityDirectory",
+            "label": "Internal Azure resource identity directory",
+            "type": 1,
+            "description": "Hidden live Azure Resource Graph mapping from managed identity principal IDs to friendly Azure resource names.",
+            "query": "Resources\n| where isnotempty(identity.principalId)\n| project ObjectId = tolower(tostring(identity.principalId)),\n          DisplayName = name,\n          IdentityType = \"SystemAssignedManagedIdentity\",\n          ResourceId = id,\n          ResourceType = type,\n          IdentityPriority = 60\n| union (\n    Resources\n    | where type =~ \"microsoft.managedidentity/userassignedidentities\"\n    | project ObjectId = tolower(tostring(properties.principalId)),\n              DisplayName = name,\n              IdentityType = \"UserAssignedManagedIdentity\",\n              ResourceId = id,\n              ResourceType = type,\n              IdentityPriority = 70\n)\n| where isnotempty(ObjectId) and isnotempty(DisplayName)\n| summarize arg_max(\n    IdentityPriority,\n    DisplayName,\n    IdentityType,\n    ResourceId,\n    ResourceType)\n    by ObjectId\n| summarize Directory = make_list(\n    bag_pack(\n        \"objectId\", ObjectId,\n        \"displayName\", DisplayName,\n        \"identityType\", IdentityType,\n        \"resourceId\", ResourceId,\n        \"resourceType\", ResourceType),\n    5000)\n| project value = tostring(Directory)",
+            "crossComponentResources": [
+              "{Subscription}"
+            ],
+            "queryType": 1,
+            "resourceType": "microsoft.resourcegraph/resources",
+            "isHiddenWhenLocked": true
+          },
+          {
+            "id": "total-actual-cost-parameter",
+            "version": "KqlParameterItem/1.0",
+            "name": "TotalActualCost",
+            "label": "Internal grouped cost response",
+            "type": 1,
+            "description": "Single hidden Cost Management request returning grouped usage and cost rows for the selected subscription. Azure Workbooks exposes the nested row array as flattened CSV; downstream KQL reconstructs the original row structure.",
+            "query": "{\"version\":\"ARMEndpoint/1.0\",\"data\":\"{\\\"type\\\":\\\"ActualCost\\\",\\\"timeframe\\\":\\\"Custom\\\",\\\"timePeriod\\\":{\\\"from\\\":\\\"{TimeRange:startISO}\\\",\\\"to\\\":\\\"{TimeRange:endISO}\\\"},\\\"dataset\\\":{\\\"filter\\\":{\\\"dimensions\\\":{\\\"name\\\":\\\"ResourceType\\\",\\\"operator\\\":\\\"In\\\",\\\"values\\\":[\\\"microsoft.cognitiveservices/accounts\\\"]}},\\\"granularity\\\":\\\"None\\\",\\\"aggregation\\\":{\\\"UsageQuantity\\\":{\\\"name\\\":\\\"UsageQuantity\\\",\\\"function\\\":\\\"Sum\\\"},\\\"totalCostUSD\\\":{\\\"name\\\":\\\"PreTaxCost\\\",\\\"function\\\":\\\"Sum\\\"}},\\\"grouping\\\":[{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ResourceId\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ResourceType\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ResourceLocation\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ChargeType\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ResourceGroupName\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"PublisherType\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"ServiceName\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"Meter\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"PricingModel\\\"},{\\\"type\\\":\\\"Dimension\\\",\\\"name\\\":\\\"Product\\\"}],\\\"include\\\":[\\\"Tags\\\"]}}\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"application/json\"}],\"method\":\"POST\",\"path\":\"/subscriptions/{Subscription:subscriptionid}/providers/Microsoft.CostManagement/query?\",\"urlParams\":[{\"key\":\"api-version\",\"value\":\"2026-06-01\"}],\"batchDisabled\":true,\"transformers\":[{\"type\":\"jsonpath\",\"settings\":{\"tablePath\":\"$\",\"columns\":[{\"path\":\"$.properties.rows\",\"columnid\":\"CostRows\",\"columnType\":\"string\"}]}}]}",
+            "queryType": 12,
+            "isHiddenWhenLocked": true
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "parameters"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Azure Cost Management caller allocation\nUses the same Azure OpenAI deployment-tagged meters as Overall cost by model deployment. Costs are allocated and summed by caller, with remaining Foundry model spend reported as `Unknown`."
+      },
+      "name": "caller-cost-heading"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let IdentityLookup =\n    union isfuzzy=true\n        (datatable(ObjectId:string, DisplayName:string, UserPrincipalName:string, IdentityType:string, LookupTime:datetime, SourcePriority:long)[]),\n        (print Directory = parse_json('{AzureResourceIdentityDirectory:escape}')\n            | mv-expand Identity = Directory\n            | project ObjectId = tostring(Identity.objectId),\n                      DisplayName = tostring(Identity.displayName),\n                      UserPrincipalName = \"\",\n                      IdentityType = tostring(Identity.identityType),\n                      LookupTime = now(),\n                      SourcePriority = tolong(70)),\n        (IdentityInfo\n            | project ObjectId = tostring(AccountObjectId),\n                      DisplayName = tostring(AccountDisplayName),\n                      UserPrincipalName = tostring(AccountUPN),\n                      IdentityType = \"User\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 50),\n        (SigninLogs\n            | where TimeGenerated > ago(90d)\n            | extend ObjectId = coalesce(tostring(UserId), tostring(ServicePrincipalId)),\n                     DisplayName = coalesce(tostring(UserDisplayName), tostring(ServicePrincipalName), tostring(Identity)),\n                     IdentityType = iff(isnotempty(UserId), \"User\", \"ServicePrincipal\")\n            | project ObjectId, DisplayName,\n                      UserPrincipalName = tostring(UserPrincipalName),\n                      IdentityType, LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADNonInteractiveUserSignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(UserId),\n                      DisplayName = tostring(UserDisplayName),\n                      UserPrincipalName = tostring(UserPrincipalName),\n                      IdentityType = \"User\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADServicePrincipalSignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(ServicePrincipalId),\n                      DisplayName = tostring(ServicePrincipalName),\n                      UserPrincipalName = \"\",\n                      IdentityType = \"ServicePrincipal\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADManagedIdentitySignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(ServicePrincipalId),\n                      DisplayName = coalesce(tostring(ServicePrincipalName), tostring(Identity)),\n                      UserPrincipalName = \"\",\n                      IdentityType = \"ManagedIdentity\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20);\nlet LatestIdentity =\n    IdentityLookup\n    | extend ObjectId = tolower(ObjectId)\n    | where isnotempty(ObjectId) and isnotempty(DisplayName)\n    | summarize arg_max(SourcePriority, DisplayName, UserPrincipalName, IdentityType, LookupTime) by ObjectId;\nlet RawLiveCostResponse = '{TotalActualCost:escape}';\nlet LiveJsonRows = parse_json(RawLiveCostResponse);\nlet LiveCsvRows = toscalar(\n    print Fields = split(RawLiveCostResponse, \",\")\n    | mv-expand with_itemindex=ResourceIndex Field = Fields\n    | where tostring(Field) startswith \"/subscriptions/\"\n    | order by ResourceIndex asc\n    | serialize NextResourceIndex = next(ResourceIndex)\n    | extend CurrencyIndex = iff(\n        isnull(NextResourceIndex),\n        array_length(Fields) - 1,\n        tolong(NextResourceIndex) - 3)\n    | extend Tags = iff(\n        CurrencyIndex > tolong(ResourceIndex) + 10,\n        array_slice(Fields, tolong(ResourceIndex) + 10, CurrencyIndex - 1),\n        dynamic([]))\n    | extend Row = tostring(pack_array(\n        todouble(Fields[tolong(ResourceIndex) - 2]),\n        todouble(Fields[tolong(ResourceIndex) - 1]),\n        tostring(Fields[tolong(ResourceIndex)]),\n        tostring(Fields[tolong(ResourceIndex) + 1]),\n        tostring(Fields[tolong(ResourceIndex) + 2]),\n        tostring(Fields[tolong(ResourceIndex) + 3]),\n        tostring(Fields[tolong(ResourceIndex) + 4]),\n        tostring(Fields[tolong(ResourceIndex) + 5]),\n        tostring(Fields[tolong(ResourceIndex) + 6]),\n        tostring(Fields[tolong(ResourceIndex) + 7]),\n        tostring(Fields[tolong(ResourceIndex) + 8]),\n        tostring(Fields[tolong(ResourceIndex) + 9]),\n        Tags,\n        tostring(Fields[CurrencyIndex])))\n    | summarize Rows = make_list(Row));\nlet LiveCostRows = iff(\n    gettype(LiveJsonRows) == \"array\" and gettype(LiveJsonRows[0]) == \"array\",\n    LiveJsonRows,\n    LiveCsvRows);\nlet LiveCostAvailable = coalesce(array_length(LiveCostRows), 0) > 0;\nlet CostRows = LiveCostRows;\nlet CostSource = iff(LiveCostAvailable, \"Live Cost Management API\", \"No live cost value available\");\nlet DeploymentMeterCosts =\n    print Rows = CostRows\n    | mv-expand RowValue = Rows\n| extend Row = iff(gettype(RowValue) == \"string\", parse_json(tostring(RowValue)), RowValue)\n    | extend UsageQuantity = todouble(Row[0]),\n             PreTaxCostUSD = todouble(Row[1]),\n             DiagnosticResourceId = tolower(tostring(Row[2])),\n             Meter = tostring(Row[9]),\n             Product = tostring(Row[11]),\n             Tags = todynamic(Row[12]),\n             Currency = tostring(Row[13])\n    | extend TagText = strcat_array(Tags, \",\")\n    | extend ModelDeployment = extract('\"deployment\":\"([^\"]+)\"', 1, TagText),\n             Project = extract('\"project\":\"([^\"]+)\"', 1, TagText)\n    | where Product startswith \"Azure OpenAI\"\n    | where isnotempty(ModelDeployment)\n    | summarize MeterUsageQuantity = sum(UsageQuantity),\n                MeterPreTaxCostUSD = sum(PreTaxCostUSD)\n        by ModelDeployment, Project, DiagnosticResourceId, Meter, Product, Currency;\nlet DeploymentCosts =\n    DeploymentMeterCosts\n    | extend MeterDetail = pack(\n        \"Meter\", Meter,\n        \"Product\", Product,\n        \"UsageQuantity\", MeterUsageQuantity,\n        \"PreTaxCostUSD\", round(MeterPreTaxCostUSD, 8))\n    | summarize DeploymentActualCostUSD = sum(MeterPreTaxCostUSD),\n                CostManagementUsageByMeter = make_list(MeterDetail, 100),\n                CostProjects = make_set(Project, 100),\n                CostProducts = make_set(Product, 100),\n                CostCurrencies = make_set(Currency, 10)\n        by ModelDeployment, DiagnosticResourceId;\nlet CallerModelUsage =\n    AzureDiagnostics\n    | where TimeGenerated {TimeRange}\n    | where Category == \"RequestResponse\"\n    | extend p = parse_json(properties_s)\n    | extend callerObjectId = tolower(tostring(p.callerObjectId)),\n             ModelDeployment = tostring(p.modelDeploymentName),\n             completionTokens = tolong(p.completionTokens),\n             promptTokens = tolong(p.promptTokens),\n             DiagnosticResourceId = tolower(tostring(ResourceId)),\n             RequestTime = tostring(p.requestTime),\n             ResponseTime = tostring(p.responseTime)\n    | extend ModelDeployment = iff(isempty(ModelDeployment), \"Unknown\", ModelDeployment),\n             totalTokens = coalesce(completionTokens, 0) + coalesce(promptTokens, 0)\n    | where isnotempty(callerObjectId)\n    | extend RequestFingerprint = hash_sha256(strcat(\n        DiagnosticResourceId, \"|\",\n        callerObjectId, \"|\",\n        ModelDeployment, \"|\",\n        coalesce(RequestTime, tostring(TimeGenerated)), \"|\",\n        ResponseTime, \"|\",\n        tostring(promptTokens), \"|\",\n        tostring(completionTokens)))\n    | summarize arg_max(\n        TimeGenerated,\n        promptTokens,\n        completionTokens,\n        totalTokens)\n        by RequestFingerprint, callerObjectId, ModelDeployment, DiagnosticResourceId\n    | summarize Requests = count(),\n                PromptTokens = sum(coalesce(promptTokens, 0)),\n                CompletionTokens = sum(coalesce(completionTokens, 0)),\n                TotalTokens = sum(totalTokens)\n        by callerObjectId, ModelDeployment, DiagnosticResourceId;\nlet DeploymentLoggedUsage =\n    CallerModelUsage\n    | summarize DeploymentPromptTokens = sum(PromptTokens),\n                DeploymentCompletionTokens = sum(CompletionTokens),\n                DeploymentLoggedTokens = sum(TotalTokens)\n        by ModelDeployment, DiagnosticResourceId;\nlet UsageMetricEvents =\n    AzureDiagnostics\n    | where TimeGenerated {TimeRange}\n    | where Category == \"AzureOpenAIRequestUsage\"\n    | extend p = parse_json(properties_s)\n    | extend ModelDeployment = tostring(p.modelDeploymentName),\n             ModelName = tostring(p.modelName),\n             ModelVersion = tostring(p.modelVersion),\n             StreamType = tostring(p.streamType),\n             UsagePromptTokens = coalesce(tolong(p.promptTokens[0]), tolong(p.promptTokens), tolong(0)),\n             UsageCachedTokens = coalesce(tolong(p.cachedTokens[0]), tolong(p.cachedTokens), tolong(0)),\n             UsageCompletionTokens = coalesce(tolong(p.generatedTokens[0]), tolong(p.generatedTokens), tolong(0)),\n             DiagnosticResourceId = tolower(tostring(ResourceId)),\n             TimeToFirstTokenMs = todouble(p.timeToFirstTokenMs),\n             TimeToLastTokenMs = todouble(p.timeToLastTokenMs)\n    | where isnotempty(ModelDeployment)\n    | extend UsageFingerprint = hash_sha256(strcat(\n        DiagnosticResourceId, \"|\",\n        ModelDeployment, \"|\",\n        ModelName, \"|\",\n        ModelVersion, \"|\",\n        StreamType, \"|\",\n        tostring(UsagePromptTokens), \"|\",\n        tostring(UsageCachedTokens), \"|\",\n        tostring(UsageCompletionTokens), \"|\",\n        tostring(TimeToFirstTokenMs), \"|\",\n        tostring(TimeToLastTokenMs)))\n    | summarize arg_max(\n        TimeGenerated,\n        UsagePromptTokens,\n        UsageCachedTokens,\n        UsageCompletionTokens)\n        by UsageFingerprint;\nlet UsageMetricPromptTokens = tolong(toscalar(\n    UsageMetricEvents\n    | summarize Total = sum(UsagePromptTokens)));\nlet UsageMetricCompletionTokens = tolong(toscalar(\n    UsageMetricEvents\n    | summarize Total = sum(UsageCompletionTokens)));\nlet CostMeterInventory =\n    print Rows = CostRows\n    | mv-expand RowValue = Rows\n    | extend Row = iff(\n        gettype(RowValue) == \"string\",\n        parse_json(tostring(RowValue)),\n        RowValue)\n    | extend UsageQuantity = todouble(Row[0]),\n             PreTaxCostUSD = todouble(Row[1]),\n             DiagnosticResourceId = tolower(tostring(Row[2])),\n             Meter = tostring(Row[9]),\n             Product = tostring(Row[11]),\n             Tags = todynamic(Row[12]),\n             Currency = tostring(Row[13])\n    | extend TagText = strcat_array(Tags, \",\")\n    | extend ModelDeployment = extract('\"deployment\":\"([^\"]+)\"', 1, TagText),\n             Project = extract('\"project\":\"([^\"]+)\"', 1, TagText)\n    | where Product startswith \"Azure OpenAI\"\n    | where isnotempty(ModelDeployment)\n    | summarize UsageQuantity = sum(UsageQuantity),\n                PreTaxCostUSD = sum(PreTaxCostUSD)\n        by DiagnosticResourceId, Meter, Product, Currency,\n           ModelDeployment, Project;\nlet UnattributedMeterRows =\n    CostMeterInventory\n    | join kind=leftouter DeploymentLoggedUsage on ModelDeployment, DiagnosticResourceId\n    | extend MeterLower = tolower(Meter)\n    | extend AllocationBasis = case(\n                 MeterLower contains \"outp\" or MeterLower contains \"output\" or MeterLower contains \" opt \",\n                 \"CompletionTokens\",\n                 MeterLower contains \"inp\" or MeterLower contains \"input\" or MeterLower contains \"cached\"\n                     or MeterLower contains \"embedding\" or MeterLower contains \" wr \",\n                 \"PromptTokens\",\n                 \"TotalTokens\"),\n             AllocationDenominator = case(\n                 MeterLower contains \"outp\" or MeterLower contains \"output\" or MeterLower contains \" opt \",\n                 coalesce(DeploymentCompletionTokens, 0),\n                 MeterLower contains \"inp\" or MeterLower contains \"input\" or MeterLower contains \"cached\"\n                     or MeterLower contains \"embedding\" or MeterLower contains \" wr \",\n                 coalesce(DeploymentPromptTokens, 0),\n                 coalesce(DeploymentLoggedTokens, 0))\n    | extend UnattributedReason = case(\n                 not(Product startswith \"Azure OpenAI\"),\n                 \"Non-Azure OpenAI Cognitive Services charge\",\n                 isempty(ModelDeployment),\n                 \"Missing deployment tag\",\n                 AllocationDenominator <= 0,\n                 \"No matching caller token telemetry\",\n                 \"\"),\n             UnattributedCostUSD = iff(\n                 Product startswith \"Azure OpenAI\"\n                     and isnotempty(ModelDeployment)\n                     and AllocationDenominator > 0,\n                 0.0,\n                 PreTaxCostUSD)\n    | where UnattributedCostUSD > 0.0;\nlet IdentifiedUnallocatedCostUSD = todouble(toscalar(\n    UnattributedMeterRows\n    | summarize Total = sum(round(UnattributedCostUSD, 8))));\nlet UnattributedMeterBreakdown = toscalar(\n    UnattributedMeterRows\n    | extend MeterDetail = pack(\n        \"Meter\", Meter,\n        \"Product\", Product,\n        \"ResourceId\", DiagnosticResourceId,\n        \"ModelDeployment\", ModelDeployment,\n        \"Project\", Project,\n        \"UsageQuantity\", UsageQuantity,\n        \"PreTaxCostUSD\", round(UnattributedCostUSD, 8),\n        \"Currency\", Currency,\n        \"Reason\", UnattributedReason)\n    | summarize Details = make_list(MeterDetail, 500));\nlet UnattributedModelDeployments = toscalar(\n    UnattributedMeterRows\n    | where isnotempty(ModelDeployment)\n    | summarize Deployments = make_set(ModelDeployment, 100));\nlet CallerRollup =\nCallerModelUsage\n| join kind=leftouter DeploymentLoggedUsage on ModelDeployment, DiagnosticResourceId\n| join kind=leftouter DeploymentCosts on ModelDeployment, DiagnosticResourceId\n| extend PromptTokenShare = iff(DeploymentPromptTokens > 0, todouble(PromptTokens) / DeploymentPromptTokens, 0.0),\n         CompletionTokenShare = iff(DeploymentCompletionTokens > 0, todouble(CompletionTokens) / DeploymentCompletionTokens, 0.0),\n         TokenShare = iff(DeploymentLoggedTokens > 0, todouble(TotalTokens) / DeploymentLoggedTokens, 0.0)\n| extend MeterDetails = iff(\n    coalesce(array_length(CostManagementUsageByMeter), 0) > 0,\n    CostManagementUsageByMeter,\n    dynamic([{\"Meter\":\"\",\"Product\":\"\",\"UsageQuantity\":null,\"PreTaxCostUSD\":null}]))\n| mv-expand MeterDetail = MeterDetails\n| extend Meter = tostring(MeterDetail.Meter),\n         MeterProduct = tostring(MeterDetail.Product),\n         MeterUsageQuantity = todouble(MeterDetail.UsageQuantity),\n         MeterPreTaxCostUSD = todouble(MeterDetail.PreTaxCostUSD)\n| extend MeterLower = tolower(Meter)\n| extend MeterAllocationBasis = case(\n             MeterLower contains \"outp\" or MeterLower contains \"output\" or MeterLower contains \" opt \",\n             \"CompletionTokens\",\n             MeterLower contains \"inp\" or MeterLower contains \"input\" or MeterLower contains \"cached\"\n                 or MeterLower contains \"embedding\" or MeterLower contains \" wr \",\n             \"PromptTokens\",\n             \"TotalTokens\"),\n         MeterTokenShare = case(\n             MeterLower contains \"outp\" or MeterLower contains \"output\" or MeterLower contains \" opt \",\n             CompletionTokenShare,\n             MeterLower contains \"inp\" or MeterLower contains \"input\" or MeterLower contains \"cached\"\n                 or MeterLower contains \"embedding\" or MeterLower contains \" wr \",\n             PromptTokenShare,\n             TokenShare)\n| extend UserAllocatedMeterCostUSD = MeterPreTaxCostUSD * MeterTokenShare\n| extend UserMeterDetail = pack(\n    \"Meter\", Meter,\n    \"Product\", MeterProduct,\n    \"UsageQuantity\", MeterUsageQuantity,\n    \"DeploymentPreTaxCostUSD\", MeterPreTaxCostUSD,\n    \"AllocationBasis\", MeterAllocationBasis,\n    \"UserTokenShare\", round(MeterTokenShare, 8),\n    \"UserAllocatedCostUSD\", round(UserAllocatedMeterCostUSD, 8))\n| summarize AllocatedCostUSD = sum(UserAllocatedMeterCostUSD),\n            MatchedMeterCount = countif(isnotnull(MeterPreTaxCostUSD)),\n            MeterBreakdown = make_list_if(UserMeterDetail, isnotnull(MeterPreTaxCostUSD), 100),\n            DeploymentActualCostUSD = take_any(DeploymentActualCostUSD),\n            CostProjects = take_any(CostProjects),\n            CostProducts = take_any(CostProducts),\n            CostCurrencies = take_any(CostCurrencies)\n    by callerObjectId, ModelDeployment, DiagnosticResourceId, Requests,\n       PromptTokens, CompletionTokens, TotalTokens,\n       DeploymentPromptTokens, DeploymentCompletionTokens,\n       DeploymentLoggedTokens, PromptTokenShare, CompletionTokenShare, TokenShare\n| extend PerDeploymentEstimatedCostUSD = iff(\n             MatchedMeterCount > 0,\n             round(AllocatedCostUSD, 8),\n             real(null)),\n         DeploymentCostAvailable = MatchedMeterCount > 0\n| extend DeploymentDetail = pack(\n    \"ModelDeployment\", ModelDeployment,\n    \"DiagnosticResourceId\", DiagnosticResourceId,\n    \"PromptTokens\", PromptTokens,\n    \"CompletionTokens\", CompletionTokens,\n    \"TotalTokens\", TotalTokens,\n    \"EstimatedCostUSD\", PerDeploymentEstimatedCostUSD,\n    \"DeploymentActualCostUSD\", DeploymentActualCostUSD,\n    \"Projects\", CostProjects,\n    \"MeterBreakdown\", MeterBreakdown)\n| summarize Requests = sum(Requests),\n            PromptTokens = sum(PromptTokens),\n            CompletionTokens = sum(CompletionTokens),\n            TotalTokens = sum(TotalTokens),\n            CallerAllocatedCostUSD = sum(PerDeploymentEstimatedCostUSD),\n            MatchedDeploymentCount = countif(DeploymentCostAvailable),\n            ModelDeployments = make_set(ModelDeployment, 100),\n            UnmatchedModelDeployments = make_set_if(\n                ModelDeployment,\n                not(DeploymentCostAvailable),\n                100),\n            DeploymentBreakdown = make_list(DeploymentDetail, 100)\n    by callerObjectId\n| join kind=leftouter LatestIdentity on $left.callerObjectId == $right.ObjectId\n| extend CallerDisplayName = coalesce(DisplayName, UserPrincipalName, callerObjectId),\n         CallerPrincipalName = UserPrincipalName,\n         CallerType = coalesce(IdentityType, \"Unresolved\"),\n         EstimatedCostUSD = iff(\n             MatchedDeploymentCount > 0,\n             round(CallerAllocatedCostUSD, 8),\n             real(null)),\n         CostAvailable = MatchedDeploymentCount > 0,\n         CostSource = CostSource\n| project CallerDisplayName, PromptTokens, CompletionTokens, TotalTokens,\n          UsageCostUSD = EstimatedCostUSD, ModelDeployments, DeploymentBreakdown,\n          MatchedDeploymentCount, UnmatchedModelDeployments,\n          CallerPrincipalName, CallerType, callerObjectId, Requests,\n          CostAvailable, LiveCostAvailable, CostSource;\nlet TotalCostManagementUSD = todouble(toscalar(\n    print Rows = CostRows\n    | mv-expand RowValue = Rows\n    | extend Row = iff(\n        gettype(RowValue) == \"string\",\n        parse_json(tostring(RowValue)),\n        RowValue)\n    | extend PreTaxCostUSD = todouble(Row[1]),\n             Product = tostring(Row[11]),\n             Tags = todynamic(Row[12])\n    | extend TagText = strcat_array(Tags, \",\")\n    | extend ModelDeployment = extract('\"deployment\":\"([^\"]+)\"', 1, TagText)\n    | where Product startswith \"Azure OpenAI\"\n    | where isnotempty(ModelDeployment)\n    | summarize Total = sum(PreTaxCostUSD)));\nlet AttributedCallerCostUSD = todouble(toscalar(\n    CallerRollup\n    | summarize Total = sum(coalesce(UsageCostUSD, 0.0))));\nlet AttributedPromptTokens = tolong(toscalar(\n    CallerRollup\n    | summarize Total = sum(PromptTokens)));\nlet AttributedCompletionTokens = tolong(toscalar(\n    CallerRollup\n    | summarize Total = sum(CompletionTokens)));\nlet UnknownPromptTokens = max_of(\n    coalesce(UsageMetricPromptTokens, tolong(0))\n        - coalesce(AttributedPromptTokens, tolong(0)),\n    tolong(0));\nlet UnknownCompletionTokens = max_of(\n    coalesce(UsageMetricCompletionTokens, tolong(0))\n        - coalesce(AttributedCompletionTokens, tolong(0)),\n    tolong(0));\nlet UnknownTotalTokens = UnknownPromptTokens + UnknownCompletionTokens;\nlet UnallocatedCostUSD = max_of(\n    coalesce(TotalCostManagementUSD, 0.0)\n        - coalesce(AttributedCallerCostUSD, 0.0),\n    0.0);\nlet ReconciliationAdjustmentUSD =\n    round(UnallocatedCostUSD, 8)\n        - coalesce(IdentifiedUnallocatedCostUSD, 0.0);\nlet UnknownMeterBreakdown = array_concat(\n    coalesce(UnattributedMeterBreakdown, dynamic([])),\n    iff(\n        abs(ReconciliationAdjustmentUSD) > 0.000000005,\n        pack_array(pack(\n            \"Meter\", \"Reconciliation adjustment\",\n            \"Product\", \"\",\n            \"ResourceId\", \"\",\n            \"ModelDeployment\", \"\",\n            \"Project\", \"\",\n            \"UsageQuantity\", real(null),\n            \"PreTaxCostUSD\", round(ReconciliationAdjustmentUSD, 8),\n            \"Currency\", \"USD\",\n            \"Reason\", \"Caller allocation rounding residual\")),\n        dynamic([])));\nunion\n    CallerRollup,\n    (print RemainingCostUSD = UnallocatedCostUSD\n        | where RemainingCostUSD > 0.000000005\n        | project CallerDisplayName = \"Unknown\",\n                  PromptTokens = UnknownPromptTokens,\n                  CompletionTokens = UnknownCompletionTokens,\n                  TotalTokens = UnknownTotalTokens,\n                  UsageCostUSD = round(RemainingCostUSD, 8),\n                  ModelDeployments = coalesce(UnattributedModelDeployments, dynamic([])),\n                  DeploymentBreakdown = UnknownMeterBreakdown,\n                  MatchedDeploymentCount = tolong(0),\n                  UnmatchedModelDeployments = coalesce(UnattributedModelDeployments, dynamic([])),\n                  CallerPrincipalName = \"\",\n                  CallerType = \"Unknown\",\n                  callerObjectId = \"\",\n                  Requests = tolong(0),\n                  CostAvailable = true,\n                  LiveCostAvailable = LiveCostAvailable,\n                  CostSource = CostSource)\n| order by UsageCostUSD desc, TotalTokens desc",
+        "size": 0,
+        "title": "User allocation rolled up across model deployments",
+        "timeContextFromParameter": "TimeRange",
+        "showExportToExcel": true,
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "UsageCostUSD",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "green"
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "currency",
+                  "currency": "USD",
+                  "maximumFractionDigits": 8
+                }
+              }
+            }
+          ],
+          "filter": true
+        },
+        "sortBy": []
+      },
+      "name": "caller-cost-allocation"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## User cost by model deployment\nEach deployment's actual Cost Management pre-tax cost is allocated to callers by their share of logged tokens within the same deployment and Cognitive Services resource."
+      },
+      "name": "caller-model-cost-heading"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "model-deployments-parameter",
+            "version": "KqlParameterItem/1.0",
+            "name": "ModelDeployments",
+            "label": "Model deployments",
+            "type": 2,
+            "description": "Filters the User cost by model deployment table for the selected workspaces and time range.",
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where Category == \"RequestResponse\"\n| extend p = parse_json(properties_s)\n| extend ModelDeployment = tostring(p.modelDeploymentName)\n| where isnotempty(ModelDeployment)\n| distinct ModelDeployment\n| project value = ModelDeployment, label = ModelDeployment\n| order by label asc",
+            "crossComponentResources": [
+              "{Workspace}"
+            ],
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "includeAll": true,
+              "showDefault": false
+            },
+            "defaultValue": "value::all",
+            "value": [
+              "value::all"
+            ],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          },
+          {
+            "id": "user-callers-parameter",
+            "version": "KqlParameterItem/1.0",
+            "name": "UserCallers",
+            "label": "Users",
+            "type": 2,
+            "description": "Filters User cost by model deployment after cost allocation, so selecting users does not redistribute deployment cost.",
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "let IdentityLookup =\n    union isfuzzy=true\n        (datatable(ObjectId:string, DisplayName:string, UserPrincipalName:string, IdentityType:string, LookupTime:datetime, SourcePriority:long)[]),\n        (print Directory = parse_json('{AzureResourceIdentityDirectory:escape}')\n            | mv-expand Identity = Directory\n            | project ObjectId = tostring(Identity.objectId),\n                      DisplayName = tostring(Identity.displayName),\n                      UserPrincipalName = \"\",\n                      IdentityType = tostring(Identity.identityType),\n                      LookupTime = now(),\n                      SourcePriority = tolong(70)),\n        (IdentityInfo\n            | project ObjectId = tostring(AccountObjectId),\n                      DisplayName = tostring(AccountDisplayName),\n                      UserPrincipalName = tostring(AccountUPN),\n                      IdentityType = \"User\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 50),\n        (SigninLogs\n            | where TimeGenerated > ago(90d)\n            | extend ObjectId = coalesce(tostring(UserId), tostring(ServicePrincipalId)),\n                     DisplayName = coalesce(tostring(UserDisplayName), tostring(ServicePrincipalName), tostring(Identity)),\n                     IdentityType = iff(isnotempty(UserId), \"User\", \"ServicePrincipal\")\n            | project ObjectId, DisplayName,\n                      UserPrincipalName = tostring(UserPrincipalName),\n                      IdentityType, LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADNonInteractiveUserSignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(UserId),\n                      DisplayName = tostring(UserDisplayName),\n                      UserPrincipalName = tostring(UserPrincipalName),\n                      IdentityType = \"User\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADServicePrincipalSignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(ServicePrincipalId),\n                      DisplayName = tostring(ServicePrincipalName),\n                      UserPrincipalName = \"\",\n                      IdentityType = \"ServicePrincipal\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADManagedIdentitySignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(ServicePrincipalId),\n                      DisplayName = coalesce(tostring(ServicePrincipalName), tostring(Identity)),\n                      UserPrincipalName = \"\",\n                      IdentityType = \"ManagedIdentity\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20);\nlet LatestIdentity =\n    IdentityLookup\n    | extend ObjectId = tolower(ObjectId)\n    | where isnotempty(ObjectId) and isnotempty(DisplayName)\n    | summarize arg_max(SourcePriority, DisplayName, UserPrincipalName, IdentityType, LookupTime) by ObjectId;\nAzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where Category == \"RequestResponse\"\n| extend p = parse_json(properties_s)\n| extend callerObjectId = tolower(tostring(p.callerObjectId))\n| where isnotempty(callerObjectId)\n| distinct callerObjectId\n| join kind=leftouter LatestIdentity on $left.callerObjectId == $right.ObjectId\n| extend CallerDisplayName = coalesce(DisplayName, UserPrincipalName, callerObjectId)\n| project value = callerObjectId,\n          label = strcat(CallerDisplayName, \" (\", callerObjectId, \")\")\n| order by label asc",
+            "crossComponentResources": [
+              "{Workspace}"
+            ],
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "includeAll": true,
+              "showDefault": false
+            },
+            "defaultValue": "value::all",
+            "value": [
+              "value::all"
+            ],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "model-deployment-parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let IdentityLookup =\n    union isfuzzy=true\n        (datatable(ObjectId:string, DisplayName:string, UserPrincipalName:string, IdentityType:string, LookupTime:datetime, SourcePriority:long)[]),\n        (print Directory = parse_json('{AzureResourceIdentityDirectory:escape}')\n            | mv-expand Identity = Directory\n            | project ObjectId = tostring(Identity.objectId),\n                      DisplayName = tostring(Identity.displayName),\n                      UserPrincipalName = \"\",\n                      IdentityType = tostring(Identity.identityType),\n                      LookupTime = now(),\n                      SourcePriority = tolong(70)),\n        (IdentityInfo\n            | project ObjectId = tostring(AccountObjectId),\n                      DisplayName = tostring(AccountDisplayName),\n                      UserPrincipalName = tostring(AccountUPN),\n                      IdentityType = \"User\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 50),\n        (SigninLogs\n            | where TimeGenerated > ago(90d)\n            | extend ObjectId = coalesce(tostring(UserId), tostring(ServicePrincipalId)),\n                     DisplayName = coalesce(tostring(UserDisplayName), tostring(ServicePrincipalName), tostring(Identity)),\n                     IdentityType = iff(isnotempty(UserId), \"User\", \"ServicePrincipal\")\n            | project ObjectId, DisplayName,\n                      UserPrincipalName = tostring(UserPrincipalName),\n                      IdentityType, LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADNonInteractiveUserSignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(UserId),\n                      DisplayName = tostring(UserDisplayName),\n                      UserPrincipalName = tostring(UserPrincipalName),\n                      IdentityType = \"User\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADServicePrincipalSignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(ServicePrincipalId),\n                      DisplayName = tostring(ServicePrincipalName),\n                      UserPrincipalName = \"\",\n                      IdentityType = \"ServicePrincipal\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20),\n        (AADManagedIdentitySignInLogs\n            | where TimeGenerated > ago(90d)\n            | project ObjectId = tostring(ServicePrincipalId),\n                      DisplayName = coalesce(tostring(ServicePrincipalName), tostring(Identity)),\n                      UserPrincipalName = \"\",\n                      IdentityType = \"ManagedIdentity\",\n                      LookupTime = TimeGenerated,\n                      SourcePriority = 20);\nlet LatestIdentity =\n    IdentityLookup\n    | extend ObjectId = tolower(ObjectId)\n    | where isnotempty(ObjectId) and isnotempty(DisplayName)\n    | summarize arg_max(SourcePriority, DisplayName, UserPrincipalName, IdentityType, LookupTime) by ObjectId;\nlet RawLiveCostResponse = '{TotalActualCost:escape}';\nlet LiveJsonRows = parse_json(RawLiveCostResponse);\nlet LiveCsvRows = toscalar(\n    print Fields = split(RawLiveCostResponse, \",\")\n    | mv-expand with_itemindex=ResourceIndex Field = Fields\n    | where tostring(Field) startswith \"/subscriptions/\"\n    | order by ResourceIndex asc\n    | serialize NextResourceIndex = next(ResourceIndex)\n    | extend CurrencyIndex = iff(\n        isnull(NextResourceIndex),\n        array_length(Fields) - 1,\n        tolong(NextResourceIndex) - 3)\n    | extend Tags = iff(\n        CurrencyIndex > tolong(ResourceIndex) + 10,\n        array_slice(Fields, tolong(ResourceIndex) + 10, CurrencyIndex - 1),\n        dynamic([]))\n    | extend Row = tostring(pack_array(\n        todouble(Fields[tolong(ResourceIndex) - 2]),\n        todouble(Fields[tolong(ResourceIndex) - 1]),\n        tostring(Fields[tolong(ResourceIndex)]),\n        tostring(Fields[tolong(ResourceIndex) + 1]),\n        tostring(Fields[tolong(ResourceIndex) + 2]),\n        tostring(Fields[tolong(ResourceIndex) + 3]),\n        tostring(Fields[tolong(ResourceIndex) + 4]),\n        tostring(Fields[tolong(ResourceIndex) + 5]),\n        tostring(Fields[tolong(ResourceIndex) + 6]),\n        tostring(Fields[tolong(ResourceIndex) + 7]),\n        tostring(Fields[tolong(ResourceIndex) + 8]),\n        tostring(Fields[tolong(ResourceIndex) + 9]),\n        Tags,\n        tostring(Fields[CurrencyIndex])))\n    | summarize Rows = make_list(Row));\nlet LiveCostRows = iff(\n    gettype(LiveJsonRows) == \"array\" and gettype(LiveJsonRows[0]) == \"array\",\n    LiveJsonRows,\n    LiveCsvRows);\nlet LiveCostAvailable = coalesce(array_length(LiveCostRows), 0) > 0;\nlet CostRows = LiveCostRows;\nlet CostSource = iff(LiveCostAvailable, \"Live Cost Management API\", \"No live cost value available\");\nlet DeploymentMeterCosts =\n    print Rows = CostRows\n    | mv-expand RowValue = Rows\n| extend Row = iff(gettype(RowValue) == \"string\", parse_json(tostring(RowValue)), RowValue)\n    | extend UsageQuantity = todouble(Row[0]),\n             PreTaxCostUSD = todouble(Row[1]),\n             DiagnosticResourceId = tolower(tostring(Row[2])),\n             Meter = tostring(Row[9]),\n             Product = tostring(Row[11]),\n             Tags = todynamic(Row[12]),\n             Currency = tostring(Row[13])\n    | extend TagText = strcat_array(Tags, \",\")\n    | extend ModelDeployment = extract('\"deployment\":\"([^\"]+)\"', 1, TagText),\n             Project = extract('\"project\":\"([^\"]+)\"', 1, TagText)\n    | where Product startswith \"Azure OpenAI\"\n    | where isnotempty(ModelDeployment)\n    | summarize MeterUsageQuantity = sum(UsageQuantity),\n                MeterPreTaxCostUSD = sum(PreTaxCostUSD)\n        by ModelDeployment, Project, DiagnosticResourceId, Meter, Product, Currency;\nlet DeploymentCosts =\n    DeploymentMeterCosts\n    | extend MeterDetail = pack(\n        \"Meter\", Meter,\n        \"Product\", Product,\n        \"UsageQuantity\", MeterUsageQuantity,\n        \"PreTaxCostUSD\", round(MeterPreTaxCostUSD, 8))\n    | summarize DeploymentActualCostUSD = sum(MeterPreTaxCostUSD),\n                CostManagementUsageByMeter = make_list(MeterDetail, 100),\n                CostProjects = make_set(Project, 100),\n                CostProducts = make_set(Product, 100),\n                CostCurrencies = make_set(Currency, 10)\n        by ModelDeployment, DiagnosticResourceId;\nlet CallerModelUsage =\n    AzureDiagnostics\n    | where TimeGenerated {TimeRange}\n    | where Category == \"RequestResponse\"\n    | extend p = parse_json(properties_s)\n    | extend callerObjectId = tolower(tostring(p.callerObjectId)),\n             ModelDeployment = tostring(p.modelDeploymentName),\n             completionTokens = tolong(p.completionTokens),\n             promptTokens = tolong(p.promptTokens),\n             DiagnosticResourceId = tolower(tostring(ResourceId)),\n             RequestTime = tostring(p.requestTime),\n             ResponseTime = tostring(p.responseTime)\n    | extend ModelDeployment = iff(isempty(ModelDeployment), \"Unknown\", ModelDeployment),\n             totalTokens = coalesce(completionTokens, 0) + coalesce(promptTokens, 0)\n    | where \"*\" in ({ModelDeployments}) or ModelDeployment in ({ModelDeployments})\n    | where isnotempty(callerObjectId)\n    | extend RequestFingerprint = hash_sha256(strcat(\n        DiagnosticResourceId, \"|\",\n        callerObjectId, \"|\",\n        ModelDeployment, \"|\",\n        coalesce(RequestTime, tostring(TimeGenerated)), \"|\",\n        ResponseTime, \"|\",\n        tostring(promptTokens), \"|\",\n        tostring(completionTokens)))\n    | summarize arg_max(\n        TimeGenerated,\n        promptTokens,\n        completionTokens,\n        totalTokens)\n        by RequestFingerprint, callerObjectId, ModelDeployment, DiagnosticResourceId\n    | summarize Requests = count(),\n                PromptTokens = sum(coalesce(promptTokens, 0)),\n                CompletionTokens = sum(coalesce(completionTokens, 0)),\n                TotalTokens = sum(totalTokens)\n        by callerObjectId, ModelDeployment, DiagnosticResourceId;\nlet DeploymentLoggedUsage =\n    CallerModelUsage\n    | summarize DeploymentPromptTokens = sum(PromptTokens),\n                DeploymentCompletionTokens = sum(CompletionTokens),\n                DeploymentLoggedTokens = sum(TotalTokens)\n        by ModelDeployment, DiagnosticResourceId;\nCallerModelUsage\n| join kind=leftouter DeploymentLoggedUsage on ModelDeployment, DiagnosticResourceId\n| join kind=leftouter DeploymentCosts on ModelDeployment, DiagnosticResourceId\n| extend PromptTokenShare = iff(DeploymentPromptTokens > 0, todouble(PromptTokens) / DeploymentPromptTokens, 0.0),\n         CompletionTokenShare = iff(DeploymentCompletionTokens > 0, todouble(CompletionTokens) / DeploymentCompletionTokens, 0.0),\n         TokenShare = iff(DeploymentLoggedTokens > 0, todouble(TotalTokens) / DeploymentLoggedTokens, 0.0)\n| extend MeterDetails = iff(\n    coalesce(array_length(CostManagementUsageByMeter), 0) > 0,\n    CostManagementUsageByMeter,\n    dynamic([{\"Meter\":\"\",\"Product\":\"\",\"UsageQuantity\":null,\"PreTaxCostUSD\":null}]))\n| mv-expand MeterDetail = MeterDetails\n| extend Meter = tostring(MeterDetail.Meter),\n         MeterProduct = tostring(MeterDetail.Product),\n         MeterUsageQuantity = todouble(MeterDetail.UsageQuantity),\n         MeterPreTaxCostUSD = todouble(MeterDetail.PreTaxCostUSD)\n| extend MeterLower = tolower(Meter)\n| extend MeterAllocationBasis = case(\n             MeterLower contains \"outp\" or MeterLower contains \"output\" or MeterLower contains \" opt \",\n             \"CompletionTokens\",\n             MeterLower contains \"inp\" or MeterLower contains \"input\" or MeterLower contains \"cached\"\n                 or MeterLower contains \"embedding\" or MeterLower contains \" wr \",\n             \"PromptTokens\",\n             \"TotalTokens\"),\n         MeterTokenShare = case(\n             MeterLower contains \"outp\" or MeterLower contains \"output\" or MeterLower contains \" opt \",\n             CompletionTokenShare,\n             MeterLower contains \"inp\" or MeterLower contains \"input\" or MeterLower contains \"cached\"\n                 or MeterLower contains \"embedding\" or MeterLower contains \" wr \",\n             PromptTokenShare,\n             TokenShare)\n| extend UserAllocatedMeterCostUSD = MeterPreTaxCostUSD * MeterTokenShare\n| extend UserMeterDetail = pack(\n    \"Meter\", Meter,\n    \"Product\", MeterProduct,\n    \"UsageQuantity\", MeterUsageQuantity,\n    \"DeploymentPreTaxCostUSD\", MeterPreTaxCostUSD,\n    \"AllocationBasis\", MeterAllocationBasis,\n    \"UserTokenShare\", round(MeterTokenShare, 8),\n    \"UserAllocatedCostUSD\", round(UserAllocatedMeterCostUSD, 8))\n| summarize AllocatedCostUSD = sum(UserAllocatedMeterCostUSD),\n            MatchedMeterCount = countif(isnotnull(MeterPreTaxCostUSD)),\n            MeterBreakdown = make_list_if(UserMeterDetail, isnotnull(MeterPreTaxCostUSD), 100),\n            DeploymentActualCostUSD = take_any(DeploymentActualCostUSD),\n            CostProjects = take_any(CostProjects),\n            CostProducts = take_any(CostProducts),\n            CostCurrencies = take_any(CostCurrencies)\n    by callerObjectId, ModelDeployment, DiagnosticResourceId, Requests,\n       PromptTokens, CompletionTokens, TotalTokens,\n       DeploymentPromptTokens, DeploymentCompletionTokens,\n       DeploymentLoggedTokens, PromptTokenShare, CompletionTokenShare, TokenShare\n| where \"*\" in ({UserCallers}) or callerObjectId in ({UserCallers})\n| join kind=leftouter LatestIdentity on $left.callerObjectId == $right.ObjectId\n| extend CallerDisplayName = coalesce(DisplayName, UserPrincipalName, callerObjectId),\n         CallerPrincipalName = UserPrincipalName,\n         CallerType = coalesce(IdentityType, \"Unresolved\"),\n         EstimatedCostUSD = iff(MatchedMeterCount > 0, round(AllocatedCostUSD, 8), real(null)),\n         CostAvailable = MatchedMeterCount > 0,\n         CostSource = CostSource\n| project CallerDisplayName, ModelDeployment, PromptTokens, CompletionTokens,\n          TotalTokens, TokenShare, EstimatedCostUSD, DeploymentActualCostUSD,\n          MeterBreakdown, PromptTokenShare, CompletionTokenShare, CostProjects,\n          CallerPrincipalName, CallerType, callerObjectId, Requests,\n          DiagnosticResourceId, DeploymentPromptTokens,\n          DeploymentCompletionTokens, DeploymentLoggedTokens,\n          CostAvailable, LiveCostAvailable, CostProducts, CostCurrencies,\n          CostSource\n| order by EstimatedCostUSD desc, TotalTokens desc",
+        "size": 0,
+        "title": "User allocation of actual cost by model deployment",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "TokenShare",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "blue"
+              },
+              "numberFormat": {
+                "unit": 1,
+                "options": {
+                  "style": "percent",
+                  "maximumFractionDigits": 2
+                }
+              }
+            },
+            {
+              "columnMatch": "EstimatedCostUSD",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "green"
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "currency",
+                  "currency": "USD",
+                  "maximumFractionDigits": 8
+                }
+              }
+            },
+            {
+              "columnMatch": "DeploymentActualCostUSD",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "green"
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "currency",
+                  "currency": "USD",
+                  "maximumFractionDigits": 6
+                }
+              }
+            }
+          ]
+        },
+        "sortBy": []
+      },
+      "name": "caller-model-cost-allocation"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Overall cost by model deployment\nActual Cost Management usage quantity and pre-tax cost grouped by the `deployment` and `project` resource tags for the selected time range."
+      },
+      "name": "overall-model-cost-heading"
+    },
+    {
+      "type": 9,
+      "content": {
+        "version": "KqlParameterItem/1.0",
+        "parameters": [
+          {
+            "id": "overall-model-deployments-parameter",
+            "version": "KqlParameterItem/1.0",
+            "name": "OverallModelDeployments",
+            "label": "Overall model deployments",
+            "type": 2,
+            "description": "Filters the actual Cost Management model deployment rows.",
+            "isRequired": true,
+            "multiSelect": true,
+            "quote": "'",
+            "delimiter": ",",
+            "query": "let RawLiveCostResponse = '{TotalActualCost:escape}';\nlet LiveJsonRows = parse_json(RawLiveCostResponse);\nlet LiveCsvRows = toscalar(\n    print Fields = split(RawLiveCostResponse, \",\")\n    | mv-expand with_itemindex=ResourceIndex Field = Fields\n    | where tostring(Field) startswith \"/subscriptions/\"\n    | order by ResourceIndex asc\n    | serialize NextResourceIndex = next(ResourceIndex)\n    | extend CurrencyIndex = iff(\n        isnull(NextResourceIndex),\n        array_length(Fields) - 1,\n        tolong(NextResourceIndex) - 3)\n    | extend Tags = iff(\n        CurrencyIndex > tolong(ResourceIndex) + 10,\n        array_slice(Fields, tolong(ResourceIndex) + 10, CurrencyIndex - 1),\n        dynamic([]))\n    | extend Row = tostring(pack_array(\n        todouble(Fields[tolong(ResourceIndex) - 2]),\n        todouble(Fields[tolong(ResourceIndex) - 1]),\n        tostring(Fields[tolong(ResourceIndex)]),\n        tostring(Fields[tolong(ResourceIndex) + 1]),\n        tostring(Fields[tolong(ResourceIndex) + 2]),\n        tostring(Fields[tolong(ResourceIndex) + 3]),\n        tostring(Fields[tolong(ResourceIndex) + 4]),\n        tostring(Fields[tolong(ResourceIndex) + 5]),\n        tostring(Fields[tolong(ResourceIndex) + 6]),\n        tostring(Fields[tolong(ResourceIndex) + 7]),\n        tostring(Fields[tolong(ResourceIndex) + 8]),\n        tostring(Fields[tolong(ResourceIndex) + 9]),\n        Tags,\n        tostring(Fields[CurrencyIndex])))\n    | summarize Rows = make_list(Row));\nlet LiveCostRows = iff(\n    gettype(LiveJsonRows) == \"array\" and gettype(LiveJsonRows[0]) == \"array\",\n    LiveJsonRows,\n    LiveCsvRows);\nlet CostRows = LiveCostRows;\nprint Rows = CostRows\n| mv-expand RowValue = Rows\n| extend Row = iff(gettype(RowValue) == \"string\", parse_json(tostring(RowValue)), RowValue)\n| extend Product = tostring(Row[11]),\n         Tags = todynamic(Row[12])\n| extend TagText = strcat_array(Tags, \",\")\n| extend ModelDeployment = extract('\"deployment\":\"([^\"]+)\"', 1, TagText)\n| where Product startswith \"Azure OpenAI\"\n| where isnotempty(ModelDeployment)\n| distinct ModelDeployment\n| project value = ModelDeployment, label = ModelDeployment\n| order by label asc",
+            "crossComponentResources": [
+              "{Workspace}"
+            ],
+            "typeSettings": {
+              "additionalResourceOptions": [
+                "value::all"
+              ],
+              "includeAll": true,
+              "showDefault": false
+            },
+            "defaultValue": "value::all",
+            "value": [
+              "value::all"
+            ],
+            "queryType": 0,
+            "resourceType": "microsoft.operationalinsights/workspaces"
+          }
+        ],
+        "style": "pills",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces"
+      },
+      "name": "overall-model-deployment-parameters"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "let RawLiveCostResponse = '{TotalActualCost:escape}';\nlet LiveJsonRows = parse_json(RawLiveCostResponse);\nlet LiveCsvRows = toscalar(\n    print Fields = split(RawLiveCostResponse, \",\")\n    | mv-expand with_itemindex=ResourceIndex Field = Fields\n    | where tostring(Field) startswith \"/subscriptions/\"\n    | order by ResourceIndex asc\n    | serialize NextResourceIndex = next(ResourceIndex)\n    | extend CurrencyIndex = iff(\n        isnull(NextResourceIndex),\n        array_length(Fields) - 1,\n        tolong(NextResourceIndex) - 3)\n    | extend Tags = iff(\n        CurrencyIndex > tolong(ResourceIndex) + 10,\n        array_slice(Fields, tolong(ResourceIndex) + 10, CurrencyIndex - 1),\n        dynamic([]))\n    | extend Row = tostring(pack_array(\n        todouble(Fields[tolong(ResourceIndex) - 2]),\n        todouble(Fields[tolong(ResourceIndex) - 1]),\n        tostring(Fields[tolong(ResourceIndex)]),\n        tostring(Fields[tolong(ResourceIndex) + 1]),\n        tostring(Fields[tolong(ResourceIndex) + 2]),\n        tostring(Fields[tolong(ResourceIndex) + 3]),\n        tostring(Fields[tolong(ResourceIndex) + 4]),\n        tostring(Fields[tolong(ResourceIndex) + 5]),\n        tostring(Fields[tolong(ResourceIndex) + 6]),\n        tostring(Fields[tolong(ResourceIndex) + 7]),\n        tostring(Fields[tolong(ResourceIndex) + 8]),\n        tostring(Fields[tolong(ResourceIndex) + 9]),\n        Tags,\n        tostring(Fields[CurrencyIndex])))\n    | summarize Rows = make_list(Row));\nlet LiveCostRows = iff(\n    gettype(LiveJsonRows) == \"array\" and gettype(LiveJsonRows[0]) == \"array\",\n    LiveJsonRows,\n    LiveCsvRows);\nlet LiveCostAvailable = coalesce(array_length(LiveCostRows), 0) > 0;\nlet CostRows = LiveCostRows;\nlet CostSource = iff(LiveCostAvailable, \"Live Cost Management API\", \"No live cost value available\");\nprint Rows = CostRows\n| mv-expand RowValue = Rows\n| extend Row = iff(gettype(RowValue) == \"string\", parse_json(tostring(RowValue)), RowValue)\n| extend UsageQuantity = todouble(Row[0]),\n         PreTaxCostUSD = todouble(Row[1]),\n         ResourceId = tostring(Row[2]),\n         ResourceLocation = tostring(Row[4]),\n         ChargeType = tostring(Row[5]),\n         ResourceGroupName = tostring(Row[6]),\n         Meter = tostring(Row[9]),\n         PricingModel = tostring(Row[10]),\n         Product = tostring(Row[11]),\n         Tags = todynamic(Row[12]),\n         Currency = tostring(Row[13])\n| extend TagText = strcat_array(Tags, \",\")\n| extend ModelDeployment = extract('\"deployment\":\"([^\"]+)\"', 1, TagText),\n         Project = extract('\"project\":\"([^\"]+)\"', 1, TagText)\n| where Product startswith \"Azure OpenAI\"\n| where isnotempty(ModelDeployment)\n| where \"*\" in ({OverallModelDeployments}) or ModelDeployment in ({OverallModelDeployments})\n| summarize MeterUsageQuantity = sum(UsageQuantity),\n            MeterPreTaxCostUSD = sum(PreTaxCostUSD)\n    by Project, ModelDeployment, Meter, Product, Currency\n| extend MeterDetail = pack(\n    \"Meter\", Meter,\n    \"Product\", Product,\n    \"UsageQuantity\", MeterUsageQuantity,\n    \"PreTaxCostUSD\", round(MeterPreTaxCostUSD, 8))\n| summarize PreTaxCostUSD = sum(MeterPreTaxCostUSD),\n            Meters = make_set(Meter, 100),\n            MeterBreakdown = make_list(MeterDetail, 100),\n            Products = make_set(Product, 100),\n            Currencies = make_set(Currency, 10)\n    by Project, ModelDeployment\n| extend CostSource = CostSource\n| project ModelDeployment, Project, PreTaxCostUSD, Meters,\n          MeterBreakdown, Products, Currencies, CostSource\n| order by PreTaxCostUSD desc, ModelDeployment asc",
+        "size": 0,
+        "title": "Actual cost by model deployment",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "formatters": [
+            {
+              "columnMatch": "PreTaxCostUSD",
+              "formatter": 8,
+              "formatOptions": {
+                "palette": "green"
+              },
+              "numberFormat": {
+                "unit": 0,
+                "options": {
+                  "style": "currency",
+                  "currency": "USD",
+                  "maximumFractionDigits": 6
+                }
+              }
+            }
+          ]
+        },
+        "sortBy": []
+      },
+      "name": "overall-model-cost-allocation"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "## Azure AI diagnostic usage"
+      },
+      "name": "diagnostics-heading"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where Category == \"RequestResponse\"\n| extend p = parse_json(properties_s)\n| extend callerObjectId = tostring(p.callerObjectId),\n         modelDeploymentName = tostring(p.modelDeploymentName),\n         completionTokens = tolong(p.completionTokens),\n         promptTokens = tolong(p.promptTokens)\n| extend totalTokens = coalesce(completionTokens, 0) + coalesce(promptTokens, 0)\n| where isnotempty(callerObjectId)\n| summarize Requests = count(),\n            PromptTokens = sum(promptTokens),\n            CompletionTokens = sum(completionTokens),\n            TotalTokens = sum(totalTokens),\n            UniqueCallers = dcount(callerObjectId)\n| extend Metrics = pack_array(\n    pack_array(\"Requests\", Requests),\n    pack_array(\"Prompt tokens\", PromptTokens),\n    pack_array(\"Completion tokens\", CompletionTokens),\n    pack_array(\"Total tokens\", TotalTokens),\n    pack_array(\"Unique callers\", UniqueCallers))\n| mv-expand Metrics\n| project Metric = tostring(Metrics[0]), Value = tolong(Metrics[1])",
+        "size": 4,
+        "title": "Diagnostic usage summary",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "visualization": "tiles",
+        "tileSettings": {
+          "titleContent": {
+            "columnMatch": "Metric",
+            "formatter": 1
+          },
+          "leftContent": {
+            "columnMatch": "Value",
+            "formatter": 12,
+            "formatOptions": {
+              "palette": "auto"
+            },
+            "numberFormat": {
+              "unit": 17,
+              "options": {
+                "style": "decimal",
+                "useGrouping": true,
+                "maximumFractionDigits": 0
+              }
+            }
+          },
+          "showBorder": true
+        }
+      },
+      "name": "diagnostic-summary"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where Category == \"RequestResponse\"\n| extend p = parse_json(properties_s)\n| extend ModelDeployment = tostring(p.modelDeploymentName),\n         completionTokens = tolong(p.completionTokens),\n         promptTokens = tolong(p.promptTokens)\n| extend ModelDeployment = iff(isempty(ModelDeployment), \"Unknown\", ModelDeployment),\n         TotalTokens = coalesce(completionTokens, 0) + coalesce(promptTokens, 0)\n| summarize TotalTokens = sum(TotalTokens)\n    by TimeGenerated = bin(TimeGenerated, {TimeRange:grain}), ModelDeployment\n| order by TimeGenerated asc",
+        "size": 0,
+        "title": "Tokens over time by model deployment",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "visualization": "timechart",
+        "chartSettings": {
+          "xAxis": "TimeGenerated",
+          "yAxis": [
+            "TotalTokens"
+          ],
+          "group": "ModelDeployment",
+          "createOtherGroup": 0,
+          "showLegend": true
+        }
+      },
+      "name": "diagnostic-token-trend"
+    },
+    {
+      "type": 3,
+      "content": {
+        "version": "KqlItem/1.0",
+        "query": "AzureDiagnostics\n| where TimeGenerated {TimeRange}\n| where Category == \"RequestResponse\"\n| extend p = parse_json(properties_s)\n| extend callerObjectId = tostring(p.callerObjectId),\n         modelDeploymentName = tostring(p.modelDeploymentName),\n         completionTokens = tolong(p.completionTokens),\n         promptTokens = tolong(p.promptTokens)\n| extend totalTokens = coalesce(completionTokens, 0) + coalesce(promptTokens, 0)\n| where isnotempty(callerObjectId)\n| summarize FirstSeen = min(TimeGenerated),\n            LastSeen = max(TimeGenerated),\n            Requests = count(),\n            PromptTokens = sum(coalesce(promptTokens, 0)),\n            CompletionTokens = sum(coalesce(completionTokens, 0)),\n            TotalTokens = sum(totalTokens)\n    by callerObjectId,\n       modelDeploymentName,\n       ResourceId,\n       WorkspaceId = tostring(TenantId)\n| order by TotalTokens desc",
+        "size": 0,
+        "title": "Aggregated diagnostics by caller and model",
+        "timeContextFromParameter": "TimeRange",
+        "queryType": 0,
+        "resourceType": "microsoft.operationalinsights/workspaces",
+        "crossComponentResources": [
+          "{Workspace}"
+        ],
+        "visualization": "table",
+        "gridSettings": {
+          "sortBy": [
+            {
+              "itemKey": "TotalTokens",
+              "sortOrder": 2
+            }
+          ]
+        },
+        "sortBy": [
+          {
+            "itemKey": "TotalTokens",
+            "sortOrder": 2
+          }
+        ]
+      },
+      "name": "diagnostic-detail"
+    },
+    {
+      "type": 1,
+      "content": {
+        "json": "### Notes\n- Exactly one Cost Management ARM query is defined in this workbook. It runs on initial load and reruns when its dependencies (`Subscription` or `TimeRange`) change.\n- Cost data is live-only. If the Cost Management request is unavailable or returns no grouped rows, cost columns remain null or empty instead of using an embedded snapshot.\n- Caller cost is the rollup of the User cost by model deployment calculation. Actual meter charges are allocated within each matching deployment/resource and then summed by caller, so unrelated deployment costs are not redistributed when workspace selection changes.\n- Caller names are resolved from the live Azure Resource Graph managed identity directory, `IdentityInfo`, `SigninLogs`, `AADNonInteractiveUserSignInLogs`, `AADServicePrincipalSignInLogs`, and `AADManagedIdentitySignInLogs` when available. Resource Graph supplies friendly Azure resource names for system-assigned and user-assigned managed identity principal IDs. Unresolved identities display their object ID.\n- Diagnostic and agent tables are period aggregations controlled by `TimeRange`; individual telemetry records are not displayed.\n- The live Cost Management parameter carries grouped rows containing usage quantity, cost, resource, meter, pricing model, product, and tags. The workbook sums the grouped cost column for allocation.\n- User/model cost allocates actual Cost Management meter charges within each matching deployment/resource. Input and cached meters use prompt-token share, output meters use completion-token share, and unclassified meters use total-token share. `MeterBreakdown` exposes each meter's usage, actual deployment cost, allocation basis, caller share, and allocated caller cost.\n- Overall model cost uses the grouped Cost Management response directly. `deployment` and `project` are parsed from resource tags, and `PreTaxCostUSD` is the actual summed pre-tax charge for each distinct meter row.\n- Azure Workbooks renders the live grouped Cost Management row array as flattened CSV. Each consuming query reconstructs the original rows before using them.\n- Cost allocation queries deduplicate identical `RequestResponse` events across selected workspaces using resource, caller, deployment, `requestTime`, `responseTime`, and token counts before calculating shares.\n- The caller allocation table uses the same Azure OpenAI products with non-empty deployment tags as Overall cost by model deployment. Its `Unknown` row is limited to unmatched Foundry model meter costs and rounding residuals; non-model Cognitive Services charges are excluded.\n- The User cost by model deployment user filter is applied after deployment and meter allocation, so hiding users does not increase the cost assigned to the users that remain visible.\n- The `Unknown` caller's `DeploymentBreakdown` contains each contributing Cost Management meter with product, resource, deployment/project tags, usage quantity, pre-tax cost, currency, and the reason it was not attributed. A separate reconciliation entry is added only for rounding.\n- `Unknown` prompt and completion tokens are calculated as deduplicated `AzureOpenAIRequestUsage` prompt/generated tokens minus known caller `RequestResponse` tokens. Negative differences are clamped to zero."
+      },
+      "name": "notes"
+    }
+  ],
+  "fallbackResourceIds": [
+    "azure monitor"
+  ],
+  "$schema": "https://github.com/Microsoft/Application-Insights-Workbooks/blob/master/schema/workbook.json"
+}
